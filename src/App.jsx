@@ -1,81 +1,213 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { 
-  Play, Square, RotateCcw, Plus, Minus, Volume2, VolumeX, 
-  Maximize, Monitor, Settings, Users, Save, Download, Upload, 
-  Printer, ArrowLeft, ArrowRight, Clock, Trash2, Undo, Redo, FileText
+import React, { useState, useEffect, useRef } from 'react';
+import type { ChangeEvent } from 'react';
+import {
+  Play, Square, RotateCcw, Plus, Volume2, Maximize, Monitor,
+  Settings, Users, Printer, ArrowRight, Clock, Trash2, Undo, Redo, FileText
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
-// --- Web Audio API for Sounds (No external files needed) ---
-const playHorn = (type = 'quarter', volume = 0.5) => {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    const gainNode = ctx.createGain();
-    
-    osc.connect(gainNode);
-    gainNode.connect(ctx.destination);
-    
-    if (type === 'quarter') {
-      // ปรับปรุงเสียงแตรยาวให้มีความดุดันเหมือนแตรสนาม
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(120, ctx.currentTime);
-      
-      const osc2 = ctx.createOscillator();
-      osc2.type = 'sawtooth';
-      osc2.frequency.setValueAtTime(125, ctx.currentTime);
-      osc2.connect(gainNode);
-      
-      gainNode.gain.setValueAtTime(volume, ctx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 2.0);
-      
-      osc.start();
-      osc2.start();
-      osc.stop(ctx.currentTime + 2.0);
-      osc2.stop(ctx.currentTime + 2.0);
-    } else if (type === 'shotclock') {
-      // สังเคราะห์เสียง Buzzer ให้มีความทุ้มและแตกพร่าคล้ายของจริง
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(110, ctx.currentTime);
-      
-      // เพิ่ม Oscillator ตัวที่ 2 (ปรับความถี่เพี้ยนเล็กน้อยเพื่อสร้างเสียงรัว/Buzzer effect)
-      const osc2 = ctx.createOscillator();
-      osc2.type = 'sawtooth';
-      osc2.frequency.setValueAtTime(115, ctx.currentTime); 
-      osc2.connect(gainNode);
-      
-      // เพิ่ม Oscillator ตัวที่ 3 (คลื่นสี่เหลี่ยมเสียงทุ้มต่ำเพื่อสร้างมวลเสียง)
-      const osc3 = ctx.createOscillator();
-      osc3.type = 'square';
-      osc3.frequency.setValueAtTime(55, ctx.currentTime); 
-      osc3.connect(gainNode);
+type SoundType = 'quarter' | 'shotclock' | 'timeout';
+type TeamSide = 'home' | 'away';
+type ActiveTab = 'board' | 'roster' | 'settings' | 'summary';
+type ModalType = 'alert' | 'confirm' | 'prompt' | 'addPlayer';
 
-      // ลด Gain ลงเล็กน้อยเพื่อป้องกันเสียงแตก (Clipping) จากการรวมคลื่น
-      gainNode.gain.setValueAtTime(volume / 2.5, ctx.currentTime);
-      gainNode.gain.setValueAtTime(volume / 2.5, ctx.currentTime + 1.0);
-      gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.2);
-      
-      osc.start();
-      osc2.start();
-      osc3.start();
-      osc.stop(ctx.currentTime + 1.2);
-      osc2.stop(ctx.currentTime + 1.2);
-      osc3.stop(ctx.currentTime + 1.2);
-    } else if (type === 'timeout') {
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(800, ctx.currentTime);
-      gainNode.gain.setValueAtTime(volume, ctx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.5);
+interface SettingsState {
+  gameName: string;
+  quarterMinutes: number;
+  overtimeMinutes: number;
+  shotClockSeconds: number;
+  shortShotClockSeconds: number;
+  bonusFoulLimit: number;
+  playerFoulOutLimit: number;
+  timeoutsPerTeam: number;
+  timeoutDuration: number;
+  soundEnabled: boolean;
+  soundVolume: number;
+}
+
+interface Player {
+  id: string;
+  number: string;
+  name: string;
+  points: number;
+  fouls: number;
+  inGame: boolean;
+}
+
+interface TeamState {
+  name: string;
+  score: number;
+  fouls: number;
+  timeouts: number;
+  color: string;
+  players: Player[];
+}
+
+interface LogEntry {
+  time: string;
+  msg: string;
+  id: number;
+}
+
+interface HistorySnapshot {
+  home: TeamState;
+  away: TeamState;
+  logs: LogEntry[];
+}
+
+interface SyncState {
+  settings: SettingsState;
+  home: TeamState;
+  away: TeamState;
+  quarter: string;
+  possession: TeamSide;
+  clockMs: number;
+  isClockRunning: boolean;
+  shotClockMs: number;
+  isShotClockRunning: boolean;
+  timeoutMs: number;
+  activeTimeout: TeamSide | null;
+  blinkHome: boolean;
+  blinkAway: boolean;
+}
+
+interface PersistedState extends SyncState {
+  logs: LogEntry[];
+}
+
+interface ModalConfig {
+  isOpen: boolean;
+  type: ModalType;
+  title: string;
+  message: string;
+  defaultValue?: string | number;
+  onConfirm: ((value: any) => void) | null;
+}
+
+declare global {
+  interface Window {
+    webkitAudioContext?: typeof AudioContext;
+  }
+}
+
+const SOUND_PATHS: Record<Exclude<SoundType, 'timeout'>, string> = {
+  quarter: '/sounds/quarter-horn.mp3',
+  shotclock: '/sounds/shot-clock.mp3',
+};
+
+const audioPlayers: Partial<Record<Exclude<SoundType, 'timeout'>, HTMLAudioElement>> = {};
+let sharedAudioContext: AudioContext | null = null;
+let audioPrimed = false;
+
+const clampVolume = (volume: number) => Math.max(0, Math.min(1, Number.isFinite(volume) ? volume : 0.5));
+
+const getAudioPlayer = (type: Exclude<SoundType, 'timeout'>) => {
+  if (!audioPlayers[type]) {
+    const audio = new Audio(SOUND_PATHS[type]);
+    audio.preload = 'auto';
+    audioPlayers[type] = audio;
+  }
+  return audioPlayers[type]!;
+};
+
+const stopAudioPlayer = (type: Exclude<SoundType, 'timeout'>) => {
+  const audio = audioPlayers[type];
+  if (!audio) return;
+  audio.pause();
+  audio.currentTime = 0;
+};
+
+const primeAudio = async () => {
+  if (audioPrimed) return;
+  audioPrimed = true;
+
+  await Promise.all((Object.keys(SOUND_PATHS) as Array<Exclude<SoundType, 'timeout'>>).map(async type => {
+    const audio = getAudioPlayer(type);
+    audio.load();
+    const previousMuted = audio.muted;
+    audio.muted = true;
+    try {
+      await audio.play();
+      audio.pause();
+      audio.currentTime = 0;
+    } catch {
+      // บางเบราว์เซอร์จะอนุญาตเมื่อมีการกดปุ่มเริ่มเวลาครั้งแรก
+    } finally {
+      audio.muted = previousMuted;
     }
-  } catch (e) {
-    console.error("Audio playback failed", e);
+  }));
+};
+
+const playSynthFallback = (type: SoundType, volume: number) => {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+
+  sharedAudioContext ??= new AudioContextClass();
+  const ctx = sharedAudioContext;
+  if (ctx.state === 'suspended') void ctx.resume();
+
+  const safeVolume = Math.max(0.0001, clampVolume(volume));
+  const gainNode = ctx.createGain();
+  gainNode.connect(ctx.destination);
+
+  const createOscillator = (wave: OscillatorType, frequency: number) => {
+    const oscillator = ctx.createOscillator();
+    oscillator.type = wave;
+    oscillator.frequency.setValueAtTime(frequency, ctx.currentTime);
+    oscillator.connect(gainNode);
+    return oscillator;
+  };
+
+  if (type === 'quarter') {
+    const osc1 = createOscillator('sawtooth', 120);
+    const osc2 = createOscillator('sawtooth', 125);
+    gainNode.gain.setValueAtTime(safeVolume * 0.65, ctx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 2);
+    osc1.start(); osc2.start();
+    osc1.stop(ctx.currentTime + 2); osc2.stop(ctx.currentTime + 2);
+  } else if (type === 'shotclock') {
+    const osc1 = createOscillator('square', 430);
+    const osc2 = createOscillator('sawtooth', 445);
+    gainNode.gain.setValueAtTime(safeVolume * 0.4, ctx.currentTime);
+    gainNode.gain.setValueAtTime(safeVolume * 0.4, ctx.currentTime + 0.75);
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.95);
+    osc1.start(); osc2.start();
+    osc1.stop(ctx.currentTime + 0.95); osc2.stop(ctx.currentTime + 0.95);
+  } else {
+    const osc = createOscillator('sine', 800);
+    gainNode.gain.setValueAtTime(safeVolume * 0.7, ctx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.5);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.5);
   }
 };
 
-const DEFAULT_SETTINGS = {
+const playHorn = async (type: SoundType = 'quarter', volume = 0.5) => {
+  const safeVolume = clampVolume(volume);
+  if (safeVolume <= 0) return;
+
+  if (type === 'timeout') {
+    playSynthFallback(type, safeVolume);
+    return;
+  }
+
+  try {
+    if (type === 'quarter') stopAudioPlayer('shotclock');
+    const audio = getAudioPlayer(type);
+    audio.pause();
+    audio.currentTime = 0;
+    audio.volume = safeVolume;
+    await audio.play();
+  } catch (error) {
+    console.error('Audio file playback failed; using synthesized fallback.', error);
+    playSynthFallback(type, safeVolume);
+  }
+};
+
+const DEFAULT_SETTINGS: SettingsState = {
   gameName: "การแข่งขันบาสเกตบอล",
   quarterMinutes: 10,
+  overtimeMinutes: 5,
   shotClockSeconds: 24,
   shortShotClockSeconds: 14,
   bonusFoulLimit: 5,
@@ -86,7 +218,7 @@ const DEFAULT_SETTINGS = {
   soundVolume: 50,
 };
 
-const DEFAULT_TEAM = {
+const DEFAULT_TEAM: TeamState = {
   name: "TEAM",
   score: 0,
   fouls: 0,
@@ -95,9 +227,9 @@ const DEFAULT_TEAM = {
   players: [],
 };
 
-const generateId = () => Math.random().toString(36).substr(2, 9);
+const generateId = () => typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2, 11);
 
-const formatTime = (ms) => {
+const formatTime = (ms: number) => {
   if (ms < 0) ms = 0;
   const totalSeconds = ms / 1000;
   const minutes = Math.floor(totalSeconds / 60);
@@ -110,12 +242,38 @@ const formatTime = (ms) => {
   return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 };
 
-const formatShotClock = (ms) => {
+const formatShotClock = (ms: number) => {
   if (ms < 0) ms = 0;
   return Math.ceil(ms / 1000).toString();
 };
 
-const ControlButton = ({ onClick, icon: Icon, label, color = "bg-gray-700 hover:bg-gray-600", disabled = false }) => (
+const cloneTeam = (team: TeamState): TeamState => ({
+  ...team,
+  players: team.players.map(player => ({ ...player })),
+});
+
+const cloneLogs = (logs: LogEntry[]) => logs.map(log => ({ ...log }));
+
+const normalizeSettings = (value?: Partial<SettingsState>): SettingsState => ({
+  ...DEFAULT_SETTINGS,
+  ...(value || {}),
+});
+
+const normalizeTeam = (value: Partial<TeamState> | undefined, fallback: TeamState): TeamState => ({
+  ...fallback,
+  ...(value || {}),
+  players: Array.isArray(value?.players) ? value.players.map(player => ({ ...player })) : [],
+});
+
+interface ControlButtonProps {
+  onClick: () => void;
+  icon?: LucideIcon;
+  label: string;
+  color?: string;
+  disabled?: boolean;
+}
+
+const ControlButton = ({ onClick, icon: Icon, label, color = "bg-gray-700 hover:bg-gray-600", disabled = false }: ControlButtonProps) => (
   <button 
     onClick={onClick} 
     disabled={disabled}
@@ -126,7 +284,7 @@ const ControlButton = ({ onClick, icon: Icon, label, color = "bg-gray-700 hover:
   </button>
 );
 
-const CustomModal = ({ isOpen, type, title, message, defaultValue, onClose, onConfirm }) => {
+const CustomModal = ({ isOpen, type, title, message, defaultValue, onClose, onConfirm }: ModalConfig & { onClose: () => void }) => {
   const [input1, setInput1] = useState('');
   const [input2, setInput2] = useState('');
 
@@ -146,17 +304,17 @@ const CustomModal = ({ isOpen, type, title, message, defaultValue, onClose, onCo
         {message && <p className="text-gray-300 mb-4 text-sm">{message}</p>}
 
         {type === 'prompt' && (
-          <input type="number" value={input1} onChange={e => setInput1(e.target.value)} className="w-full bg-gray-900 border border-gray-700 p-2 rounded mb-4 text-white focus:outline-none focus:border-blue-500" autoFocus />
+          <input type="number" value={input1} onChange={(e: ChangeEvent<HTMLInputElement>) => setInput1(e.target.value)} className="w-full bg-gray-900 border border-gray-700 p-2 rounded mb-4 text-white focus:outline-none focus:border-blue-500" autoFocus />
         )}
         {type === 'addPlayer' && (
           <div className="flex flex-col gap-3 mb-4">
             <div>
               <label className="text-xs text-gray-400 mb-1 block">หมายเลขเสื้อ *</label>
-              <input type="text" placeholder="เช่น 0, 23, 99" value={input1} onChange={e => setInput1(e.target.value)} className="w-full bg-gray-900 border border-gray-700 p-2 rounded text-white focus:outline-none focus:border-blue-500" autoFocus />
+              <input type="text" placeholder="เช่น 0, 23, 99" value={input1} onChange={(e: ChangeEvent<HTMLInputElement>) => setInput1(e.target.value)} className="w-full bg-gray-900 border border-gray-700 p-2 rounded text-white focus:outline-none focus:border-blue-500" autoFocus />
             </div>
             <div>
               <label className="text-xs text-gray-400 mb-1 block">ชื่อผู้เล่น (ตัวเลือก)</label>
-              <input type="text" placeholder="ชื่อผู้เล่น" value={input2} onChange={e => setInput2(e.target.value)} className="w-full bg-gray-900 border border-gray-700 p-2 rounded text-white focus:outline-none focus:border-blue-500" />
+              <input type="text" placeholder="ชื่อผู้เล่น" value={input2} onChange={(e: ChangeEvent<HTMLInputElement>) => setInput2(e.target.value)} className="w-full bg-gray-900 border border-gray-700 p-2 rounded text-white focus:outline-none focus:border-blue-500" />
             </div>
           </div>
         )}
@@ -166,9 +324,9 @@ const CustomModal = ({ isOpen, type, title, message, defaultValue, onClose, onCo
             <button onClick={onClose} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 transition-colors rounded-lg text-sm font-semibold">ยกเลิก</button>
           )}
           <button onClick={() => {
-            if (type === 'prompt') onConfirm(input1);
-            else if (type === 'addPlayer') onConfirm({ number: input1, name: input2 });
-            else if (onConfirm) onConfirm();
+            if (type === 'prompt') onConfirm?.(input1);
+            else if (type === 'addPlayer') onConfirm?.({ number: input1, name: input2 });
+            else onConfirm?.(undefined);
             onClose();
           }} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 transition-colors rounded-lg text-sm font-bold shadow-lg">ตกลง</button>
         </div>
@@ -180,336 +338,681 @@ const CustomModal = ({ isOpen, type, title, message, defaultValue, onClose, onCo
 export default function Scoreboard() {
   const isDisplayMode = new URLSearchParams(window.location.search).get('mode') === 'display';
 
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [home, setHome] = useState({ ...DEFAULT_TEAM, name: "HOME", color: "#1e3a8a" });
-  const [away, setAway] = useState({ ...DEFAULT_TEAM, name: "AWAY", color: "#991b1b" });
+  const [settings, setSettings] = useState<SettingsState>(DEFAULT_SETTINGS);
+  const [home, setHome] = useState<TeamState>({ ...DEFAULT_TEAM, name: "HOME", color: "#1e3a8a" });
+  const [away, setAway] = useState<TeamState>({ ...DEFAULT_TEAM, name: "AWAY", color: "#991b1b" });
   const [quarter, setQuarter] = useState("Q1");
-  const [possession, setPossession] = useState("home");
+  const [possession, setPossession] = useState<TeamSide>("home");
   const [clockMs, setClockMs] = useState(10 * 60 * 1000);
   const [isClockRunning, setIsClockRunning] = useState(false);
   const [shotClockMs, setShotClockMs] = useState(24 * 1000);
   const [isShotClockRunning, setIsShotClockRunning] = useState(false);
   const [timeoutMs, setTimeoutMs] = useState(0);
-  const [activeTimeout, setActiveTimeout] = useState(null);
-  const [logs, setLogs] = useState([]);
-  const [history, setHistory] = useState([]);
-  const [redoStack, setRedoStack] = useState([]);
-  const [activeTab, setActiveTab] = useState('board');
+  const [activeTimeout, setActiveTimeout] = useState<TeamSide | null>(null);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [history, setHistory] = useState<HistorySnapshot[]>([]);
+  const [redoStack, setRedoStack] = useState<HistorySnapshot[]>([]);
+  const [activeTab, setActiveTab] = useState<ActiveTab>('board');
   const [blinkHome, setBlinkHome] = useState(false);
   const [blinkAway, setBlinkAway] = useState(false);
 
   // Modal State mapping
-  const [modalConfig, setModalConfig] = useState({ isOpen: false, type: 'alert', title: '', message: '', defaultValue: '', onConfirm: null });
+  const [modalConfig, setModalConfig] = useState<ModalConfig>({ isOpen: false, type: 'alert', title: '', message: '', defaultValue: '', onConfirm: null });
 
-  const clockRef = useRef(null);
-  const lastTickRef = useRef(Date.now());
-  const bcRef = useRef(null);
-  
-  // Use useRef to keep the latest state for replying when display window requests
-  const stateRef = useRef();
+  const bcRef = useRef<BroadcastChannel | null>(null);
+  const stateRef = useRef<SyncState | null>(null);
+  const settingsRef = useRef(settings);
+  const homeRef = useRef(home);
+  const awayRef = useRef(away);
+  const quarterRef = useRef(quarter);
+  const possessionRef = useRef(possession);
+  const clockMsRef = useRef(clockMs);
+  const isClockRunningRef = useRef(isClockRunning);
+  const shotClockMsRef = useRef(shotClockMs);
+  const isShotClockRunningRef = useRef(isShotClockRunning);
+  const timeoutMsRef = useRef(timeoutMs);
+  const activeTimeoutRef = useRef(activeTimeout);
+  const logsRef = useRef(logs);
+  const historyRef = useRef(history);
+  const redoStackRef = useRef(redoStack);
+  const gameClockEndRef = useRef<number | null>(null);
+  const shotClockEndRef = useRef<number | null>(null);
+  const timeoutEndRef = useRef<number | null>(null);
+  const timeoutWarningPlayedRef = useRef(false);
+  const lastUiUpdateRef = useRef(0);
+  const logSequenceRef = useRef(Date.now());
+
   useEffect(() => {
+    settingsRef.current = settings;
+    homeRef.current = home;
+    awayRef.current = away;
+    quarterRef.current = quarter;
+    possessionRef.current = possession;
+    clockMsRef.current = clockMs;
+    isClockRunningRef.current = isClockRunning;
+    shotClockMsRef.current = shotClockMs;
+    isShotClockRunningRef.current = isShotClockRunning;
+    timeoutMsRef.current = timeoutMs;
+    activeTimeoutRef.current = activeTimeout;
+    logsRef.current = logs;
+    historyRef.current = history;
+    redoStackRef.current = redoStack;
     stateRef.current = {
-      settings, home, away, quarter, possession, clockMs, isClockRunning, 
+      settings, home, away, quarter, possession, clockMs, isClockRunning,
       shotClockMs, isShotClockRunning, timeoutMs, activeTimeout, blinkHome, blinkAway
     };
-  });
+  }, [settings, home, away, quarter, possession, clockMs, isClockRunning, shotClockMs, isShotClockRunning, timeoutMs, activeTimeout, blinkHome, blinkAway, logs, history, redoStack]);
 
   useEffect(() => {
-    bcRef.current = new BroadcastChannel('basketball_scoreboard');
-    
-    if (isDisplayMode) {
-      // Fetch initial data from LocalStorage
-      const saved = localStorage.getItem('scoreboard_state');
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          if (parsed.settings) setSettings(parsed.settings);
-          if (parsed.home) setHome(parsed.home);
-          if (parsed.away) setAway(parsed.away);
-          if (parsed.quarter) setQuarter(parsed.quarter);
-          if (parsed.clockMs !== undefined) setClockMs(parsed.clockMs);
-        } catch (e) {}
-      }
+    const applyDisplayState = (state: Partial<PersistedState>) => {
+      const nextSettings = normalizeSettings(state.settings);
+      const nextHome = normalizeTeam(state.home, { ...DEFAULT_TEAM, name: "HOME", color: "#1e3a8a" });
+      const nextAway = normalizeTeam(state.away, { ...DEFAULT_TEAM, name: "AWAY", color: "#991b1b" });
+      setSettings(nextSettings);
+      setHome(nextHome);
+      setAway(nextAway);
+      setQuarter(state.quarter || "Q1");
+      setPossession(state.possession === 'away' ? 'away' : 'home');
+      setClockMs(typeof state.clockMs === 'number' ? Math.max(0, state.clockMs) : nextSettings.quarterMinutes * 60000);
+      setIsClockRunning(Boolean(state.isClockRunning));
+      setShotClockMs(typeof state.shotClockMs === 'number' ? Math.max(0, state.shotClockMs) : nextSettings.shotClockSeconds * 1000);
+      setIsShotClockRunning(Boolean(state.isShotClockRunning));
+      setTimeoutMs(typeof state.timeoutMs === 'number' ? Math.max(0, state.timeoutMs) : 0);
+      setActiveTimeout(state.activeTimeout === 'home' || state.activeTimeout === 'away' ? state.activeTimeout : null);
+      setBlinkHome(Boolean(state.blinkHome));
+      setBlinkAway(Boolean(state.blinkAway));
+    };
 
-      // Request latest data from the control panel
-      bcRef.current.postMessage({ type: 'REQUEST_SYNC' });
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem('scoreboard_state');
+    } catch (error) {
+      console.error('Unable to access saved scoreboard state.', error);
+    }
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as Partial<PersistedState>;
+        if (isDisplayMode) {
+          applyDisplayState(parsed);
+        } else {
+          const nextSettings = normalizeSettings(parsed.settings);
+          const nextHome = normalizeTeam(parsed.home, { ...DEFAULT_TEAM, name: "HOME", color: "#1e3a8a" });
+          const nextAway = normalizeTeam(parsed.away, { ...DEFAULT_TEAM, name: "AWAY", color: "#991b1b" });
+          const restoredQuarter = parsed.quarter || "Q1";
+          const restoredPossession: TeamSide = parsed.possession === 'away' ? 'away' : 'home';
+          const restoredClock = typeof parsed.clockMs === 'number' ? Math.max(0, parsed.clockMs) : nextSettings.quarterMinutes * 60000;
+          const restoredShotClock = typeof parsed.shotClockMs === 'number' ? Math.max(0, parsed.shotClockMs) : nextSettings.shotClockSeconds * 1000;
+          const restoredTimeout = typeof parsed.timeoutMs === 'number' ? Math.max(0, parsed.timeoutMs) : 0;
+          const restoredLogs = Array.isArray(parsed.logs) ? parsed.logs : [];
 
-      bcRef.current.onmessage = (event) => {
-        if (event.data.type === 'SYNC_STATE') {
-          const s = event.data.state;
-          setSettings(s.settings);
-          setHome(s.home);
-          setAway(s.away);
-          setQuarter(s.quarter);
-          setPossession(s.possession);
-          setClockMs(s.clockMs);
-          setIsClockRunning(s.isClockRunning);
-          setShotClockMs(s.shotClockMs);
-          setIsShotClockRunning(s.isShotClockRunning);
-          setTimeoutMs(s.timeoutMs);
-          setActiveTimeout(s.activeTimeout);
-          setBlinkHome(s.blinkHome);
-          setBlinkAway(s.blinkAway);
+          settingsRef.current = nextSettings;
+          homeRef.current = nextHome;
+          awayRef.current = nextAway;
+          quarterRef.current = restoredQuarter;
+          possessionRef.current = restoredPossession;
+          clockMsRef.current = restoredClock;
+          shotClockMsRef.current = restoredShotClock;
+          timeoutMsRef.current = restoredTimeout;
+          logsRef.current = restoredLogs;
+          isClockRunningRef.current = false;
+          isShotClockRunningRef.current = false;
+          activeTimeoutRef.current = null;
+          stateRef.current = {
+            settings: nextSettings,
+            home: nextHome,
+            away: nextAway,
+            quarter: restoredQuarter,
+            possession: restoredPossession,
+            clockMs: restoredClock,
+            isClockRunning: false,
+            shotClockMs: restoredShotClock,
+            isShotClockRunning: false,
+            timeoutMs: restoredTimeout,
+            activeTimeout: null,
+            blinkHome: false,
+            blinkAway: false,
+          };
+
+          setSettings(nextSettings);
+          setHome(nextHome);
+          setAway(nextAway);
+          setQuarter(restoredQuarter);
+          setPossession(restoredPossession);
+          setClockMs(restoredClock);
+          setShotClockMs(restoredShotClock);
+          setTimeoutMs(restoredTimeout);
+          setLogs(restoredLogs);
+          // หลังรีเฟรชให้เวลาหยุดไว้เสมอ เพื่อไม่ให้เวลาข้ามโดยไม่ตั้งใจ
+          setIsClockRunning(false);
+          setIsShotClockRunning(false);
+          setActiveTimeout(null);
         }
-      };
-    } else {
-      // Load from LocalStorage for Control Panel
-      const saved = localStorage.getItem('scoreboard_state');
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          setSettings(parsed.settings || DEFAULT_SETTINGS);
-          setHome(parsed.home || home);
-          setAway(parsed.away || away);
-          setQuarter(parsed.quarter || "Q1");
-          setClockMs(parsed.clockMs ?? (parsed.settings?.quarterMinutes * 60000));
-          setLogs(parsed.logs || []);
-        } catch (e) {}
+      } catch (error) {
+        console.error('Unable to restore scoreboard state.', error);
       }
+    }
 
-      // Listen for sync requests from Display Window
-      bcRef.current.onmessage = (event) => {
+    const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('basketball_scoreboard') : null;
+    bcRef.current = channel;
+
+    if (isDisplayMode) {
+      channel?.postMessage({ type: 'REQUEST_SYNC' });
+      if (channel) {
+        channel.onmessage = (event: MessageEvent<{ type: string; state?: SyncState }>) => {
+          if (event.data.type === 'SYNC_STATE' && event.data.state) applyDisplayState(event.data.state);
+        };
+      }
+    } else if (channel) {
+      channel.onmessage = (event: MessageEvent<{ type: string }>) => {
         if (event.data.type === 'REQUEST_SYNC' && stateRef.current) {
-          bcRef.current.postMessage({ type: 'SYNC_STATE', state: stateRef.current });
+          channel.postMessage({ type: 'SYNC_STATE', state: stateRef.current });
         }
       };
     }
 
-    return () => bcRef.current.close();
+    const handleStorage = (event: StorageEvent) => {
+      if (!isDisplayMode || event.key !== 'scoreboard_state' || !event.newValue) return;
+      try {
+        applyDisplayState(JSON.parse(event.newValue) as Partial<PersistedState>);
+      } catch (error) {
+        console.error('Unable to synchronize scoreboard state.', error);
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      channel?.close();
+      if (bcRef.current === channel) bcRef.current = null;
+    };
   }, [isDisplayMode]);
 
   useEffect(() => {
-    if (!isDisplayMode) {
+    if (isDisplayMode) return;
+    const broadcast = () => {
       if (bcRef.current && stateRef.current) {
         bcRef.current.postMessage({ type: 'SYNC_STATE', state: stateRef.current });
       }
-      const saveToLocal = setTimeout(() => {
-        localStorage.setItem('scoreboard_state', JSON.stringify({
-          settings, home, away, quarter, clockMs, logs
-        }));
-      }, 500);
-      return () => clearTimeout(saveToLocal);
-    }
-  }, [settings, home, away, quarter, possession, clockMs, isClockRunning, shotClockMs, isShotClockRunning, timeoutMs, activeTimeout, blinkHome, blinkAway, logs, isDisplayMode]);
+    };
+    const syncInterval = window.setInterval(broadcast, 100);
+    return () => window.clearInterval(syncInterval);
+  }, [isDisplayMode]);
 
   useEffect(() => {
-    let wakeLock = null;
-    const requestWakeLock = async () => {
-      try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } 
-      catch (err) {}
+    if (isDisplayMode) return;
+    const saveState = () => {
+      if (!stateRef.current) return;
+      const persisted: PersistedState = { ...stateRef.current, logs: cloneLogs(logsRef.current) };
+      try {
+        localStorage.setItem('scoreboard_state', JSON.stringify(persisted));
+      } catch (error) {
+        console.error('Unable to save scoreboard state.', error);
+      }
     };
-    requestWakeLock();
-    return () => { if (wakeLock) wakeLock.release(); };
+    const saveInterval = window.setInterval(saveState, 500);
+    window.addEventListener('beforeunload', saveState);
+    return () => {
+      saveState();
+      window.clearInterval(saveInterval);
+      window.removeEventListener('beforeunload', saveState);
+    };
+  }, [isDisplayMode]);
+
+  useEffect(() => {
+    if (isDisplayMode) return;
+    const unlock = () => { void primeAudio(); };
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    getAudioPlayer('quarter').load();
+    getAudioPlayer('shotclock').load();
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, [isDisplayMode]);
+
+  useEffect(() => {
+    type WakeLockSentinelLike = { release: () => Promise<void> };
+    type NavigatorWithWakeLock = Navigator & { wakeLock?: { request: (type: 'screen') => Promise<WakeLockSentinelLike> } };
+    let wakeLock: WakeLockSentinelLike | null = null;
+
+    const requestWakeLock = async () => {
+      try {
+        const wakeLockApi = (navigator as NavigatorWithWakeLock).wakeLock;
+        if (wakeLockApi && document.visibilityState === 'visible') wakeLock = await wakeLockApi.request('screen');
+      } catch {
+        // Wake Lock ไม่รองรับหรือผู้ใช้ไม่อนุญาต ระบบส่วนอื่นยังทำงานตามปกติ
+      }
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        wakeLock = null;
+      } else {
+        void requestWakeLock();
+      }
+    };
+
+    void requestWakeLock();
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (wakeLock) void wakeLock.release();
+    };
   }, []);
 
   useEffect(() => {
-    let animationFrameId;
-    const tick = () => {
-      const now = Date.now();
-      const dt = now - lastTickRef.current;
-      lastTickRef.current = now;
+    if (isDisplayMode) return;
+    let animationFrameId = 0;
 
-      if (isClockRunning) {
-        setClockMs(prev => {
-          const next = prev - dt;
-          if (next <= 0) {
-            setIsClockRunning(false);
+    const tick = (now: number) => {
+      const shouldRefreshUi = now - lastUiUpdateRef.current >= 50;
+      let gameExpired = false;
+
+      if (isClockRunningRef.current && gameClockEndRef.current !== null) {
+        const remaining = Math.max(0, gameClockEndRef.current - now);
+        if (remaining <= 0) {
+          gameExpired = true;
+          clockMsRef.current = 0;
+          isClockRunningRef.current = false;
+          gameClockEndRef.current = null;
+          setClockMs(0);
+          setIsClockRunning(false);
+
+          if (isShotClockRunningRef.current) {
+            const shotRemaining = shotClockEndRef.current === null ? shotClockMsRef.current : Math.max(0, shotClockEndRef.current - now);
+            shotClockMsRef.current = shotRemaining;
+            isShotClockRunningRef.current = false;
+            shotClockEndRef.current = null;
+            setShotClockMs(shotRemaining);
             setIsShotClockRunning(false);
-            if (settings.soundEnabled && !isDisplayMode) playHorn('quarter', settings.soundVolume / 100);
-            return 0;
           }
-          return next;
-        });
+
+          if (settingsRef.current.soundEnabled) void playHorn('quarter', settingsRef.current.soundVolume / 100);
+        } else if (shouldRefreshUi) {
+          clockMsRef.current = remaining;
+          setClockMs(remaining);
+        }
       }
 
-      if (isShotClockRunning) {
-        setShotClockMs(prev => {
-          const next = prev - dt;
-          if (next <= 0) {
-            setIsShotClockRunning(false);
-            if (settings.soundEnabled && !isDisplayMode) playHorn('shotclock', settings.soundVolume / 100);
-            return 0;
-          }
-          return next;
-        });
+      if (!gameExpired && isShotClockRunningRef.current && shotClockEndRef.current !== null) {
+        const remaining = Math.max(0, shotClockEndRef.current - now);
+        if (remaining <= 0) {
+          shotClockMsRef.current = 0;
+          isShotClockRunningRef.current = false;
+          shotClockEndRef.current = null;
+          setShotClockMs(0);
+          setIsShotClockRunning(false);
+          if (settingsRef.current.soundEnabled) void playHorn('shotclock', settingsRef.current.soundVolume / 100);
+        } else if (shouldRefreshUi) {
+          shotClockMsRef.current = remaining;
+          setShotClockMs(remaining);
+        }
       }
 
-      if (activeTimeout) {
-        setTimeoutMs(prev => {
-          const next = prev - dt;
-          if (next <= 0) {
-            setActiveTimeout(null);
-            if (settings.soundEnabled && !isDisplayMode) playHorn('timeout', settings.soundVolume / 100);
-            return 0;
+      if (activeTimeoutRef.current && timeoutEndRef.current !== null) {
+        const remaining = Math.max(0, timeoutEndRef.current - now);
+        if (remaining <= 0) {
+          timeoutMsRef.current = 0;
+          activeTimeoutRef.current = null;
+          timeoutEndRef.current = null;
+          timeoutWarningPlayedRef.current = false;
+          setTimeoutMs(0);
+          setActiveTimeout(null);
+          if (settingsRef.current.soundEnabled) void playHorn('timeout', settingsRef.current.soundVolume / 100);
+        } else {
+          if (remaining <= 10000 && !timeoutWarningPlayedRef.current) {
+            timeoutWarningPlayedRef.current = true;
+            if (settingsRef.current.soundEnabled) void playHorn('timeout', (settingsRef.current.soundVolume / 100) * 0.5);
           }
-          if (Math.floor(prev / 1000) === 10 && Math.floor(next / 1000) === 9 && settings.soundEnabled && !isDisplayMode) {
-             playHorn('timeout', (settings.soundVolume / 100) * 0.5);
+          if (shouldRefreshUi) {
+            timeoutMsRef.current = remaining;
+            setTimeoutMs(remaining);
           }
-          return next;
-        });
+        }
       }
-      animationFrameId = requestAnimationFrame(tick);
+
+      if (shouldRefreshUi) lastUiUpdateRef.current = now;
+      if (isClockRunningRef.current || isShotClockRunningRef.current || activeTimeoutRef.current) {
+        animationFrameId = requestAnimationFrame(tick);
+      }
     };
 
-    if (isClockRunning || isShotClockRunning || activeTimeout) {
-      lastTickRef.current = Date.now();
+    const now = performance.now();
+    if (isClockRunningRef.current && gameClockEndRef.current === null) gameClockEndRef.current = now + clockMsRef.current;
+    if (isShotClockRunningRef.current && shotClockEndRef.current === null) shotClockEndRef.current = now + shotClockMsRef.current;
+    if (activeTimeoutRef.current && timeoutEndRef.current === null) timeoutEndRef.current = now + timeoutMsRef.current;
+
+    if (isClockRunningRef.current || isShotClockRunningRef.current || activeTimeoutRef.current) {
+      lastUiUpdateRef.current = now;
       animationFrameId = requestAnimationFrame(tick);
     }
     return () => cancelAnimationFrame(animationFrameId);
-  }, [isClockRunning, isShotClockRunning, activeTimeout, settings, isDisplayMode]);
+  }, [isClockRunning, isShotClockRunning, activeTimeout, isDisplayMode]);
 
 
-  const showConfirm = (title, message, onConfirm) => setModalConfig({ isOpen: true, type: 'confirm', title, message, onConfirm });
-  const showAlert = (title, message) => setModalConfig({ isOpen: true, type: 'alert', title, message, onConfirm: null });
-  const showPrompt = (title, message, defaultValue, onConfirm) => setModalConfig({ isOpen: true, type: 'prompt', title, message, defaultValue, onConfirm });
-  const showAddPlayer = (team, onConfirm) => setModalConfig({ isOpen: true, type: 'addPlayer', title: `เพิ่มผู้เล่น ${team.name}`, message: '', onConfirm });
-  const closeModal = () => setModalConfig({ ...modalConfig, isOpen: false });
+  const showConfirm = (title: string, message: string, onConfirm: () => void) => setModalConfig({ isOpen: true, type: 'confirm', title, message, onConfirm });
+  const showAlert = (title: string, message: string) => setModalConfig({ isOpen: true, type: 'alert', title, message, onConfirm: null });
+  const showPrompt = (title: string, message: string, defaultValue: string | number, onConfirm: (value: string) => void) => setModalConfig({ isOpen: true, type: 'prompt', title, message, defaultValue, onConfirm });
+  const showAddPlayer = (team: TeamState, onConfirm: (value: { number: string; name: string }) => void) => setModalConfig({ isOpen: true, type: 'addPlayer', title: `เพิ่มผู้เล่น ${team.name}`, message: '', onConfirm });
+  const closeModal = () => setModalConfig(previous => ({ ...previous, isOpen: false }));
+
+  const setHomeState = (next: TeamState) => {
+    homeRef.current = next;
+    setHome(next);
+  };
+
+  const setAwayState = (next: TeamState) => {
+    awayRef.current = next;
+    setAway(next);
+  };
+
+  const stopGameAndShotClocks = (now = performance.now()) => {
+    if (isClockRunningRef.current && gameClockEndRef.current !== null) {
+      const remaining = Math.max(0, gameClockEndRef.current - now);
+      clockMsRef.current = remaining;
+      setClockMs(remaining);
+    }
+    if (isShotClockRunningRef.current && shotClockEndRef.current !== null) {
+      const remaining = Math.max(0, shotClockEndRef.current - now);
+      shotClockMsRef.current = remaining;
+      setShotClockMs(remaining);
+    }
+    isClockRunningRef.current = false;
+    isShotClockRunningRef.current = false;
+    gameClockEndRef.current = null;
+    shotClockEndRef.current = null;
+    setIsClockRunning(false);
+    setIsShotClockRunning(false);
+  };
 
   const toggleClock = () => {
-    if (activeTimeout) return;
-    setIsClockRunning(!isClockRunning);
-    if (!isClockRunning && shotClockMs > 0 && clockMs > 0) setIsShotClockRunning(true);
-    else setIsShotClockRunning(false);
+    if (activeTimeoutRef.current) return;
+    const now = performance.now();
+    if (isClockRunningRef.current) {
+      stopGameAndShotClocks(now);
+      return;
+    }
+    if (clockMsRef.current <= 0) return;
+
+    gameClockEndRef.current = now + clockMsRef.current;
+    isClockRunningRef.current = true;
+    setIsClockRunning(true);
+
+    if (shotClockMsRef.current > 0) {
+      shotClockEndRef.current = now + shotClockMsRef.current;
+      isShotClockRunningRef.current = true;
+      setIsShotClockRunning(true);
+    } else {
+      shotClockEndRef.current = null;
+      isShotClockRunningRef.current = false;
+      setIsShotClockRunning(false);
+    }
   };
 
   const resetClock = () => {
     showConfirm('ยืนยันการทำรายการ', 'ยืนยันการรีเซ็ตเวลาการแข่งขัน?', () => {
-      setIsClockRunning(false);
-      setClockMs(settings.quarterMinutes * 60000);
-      setShotClockMs(settings.shotClockSeconds * 1000);
+      stopGameAndShotClocks();
+      const nextClock = (quarterRef.current.startsWith('OT') ? settingsRef.current.overtimeMinutes : settingsRef.current.quarterMinutes) * 60000;
+      const nextShotClock = settingsRef.current.shotClockSeconds * 1000;
+      clockMsRef.current = nextClock;
+      shotClockMsRef.current = nextShotClock;
+      setClockMs(nextClock);
+      setShotClockMs(nextShotClock);
     });
   };
 
-  const toggleShotClock = () => setIsShotClockRunning(!isShotClockRunning);
-  const resetShotClock = (seconds) => {
-    setShotClockMs(seconds * 1000);
-    if (isClockRunning && clockMs > 0) setIsShotClockRunning(true);
+  const toggleShotClock = () => {
+    const now = performance.now();
+    if (isShotClockRunningRef.current) {
+      const remaining = shotClockEndRef.current === null ? shotClockMsRef.current : Math.max(0, shotClockEndRef.current - now);
+      shotClockMsRef.current = remaining;
+      isShotClockRunningRef.current = false;
+      shotClockEndRef.current = null;
+      setShotClockMs(remaining);
+      setIsShotClockRunning(false);
+      return;
+    }
+    if (shotClockMsRef.current <= 0) return;
+    shotClockEndRef.current = now + shotClockMsRef.current;
+    isShotClockRunningRef.current = true;
+    setIsShotClockRunning(true);
   };
 
-  const addLog = (message) => {
-    const timeStr = formatTime(clockMs);
-    setLogs(prev => [{ time: timeStr, msg: message, id: Date.now() }, ...prev].slice(0, 50));
+  const resetShotClock = (seconds: number) => {
+    const next = Math.max(0, seconds * 1000);
+    shotClockMsRef.current = next;
+    setShotClockMs(next);
+    if (isClockRunningRef.current && clockMsRef.current > 0 && next > 0) {
+      shotClockEndRef.current = performance.now() + next;
+      isShotClockRunningRef.current = true;
+      setIsShotClockRunning(true);
+    } else {
+      shotClockEndRef.current = null;
+      isShotClockRunningRef.current = false;
+      setIsShotClockRunning(false);
+    }
+  };
+
+  const adjustGameClock = (amountMs: number) => {
+    const next = Math.max(0, clockMsRef.current + amountMs);
+    clockMsRef.current = next;
+    setClockMs(next);
+    if (isClockRunningRef.current) {
+      if (next <= 0) {
+        stopGameAndShotClocks();
+        clockMsRef.current = 0;
+        setClockMs(0);
+        if (settingsRef.current.soundEnabled) void playHorn('quarter', settingsRef.current.soundVolume / 100);
+      } else {
+        gameClockEndRef.current = performance.now() + next;
+      }
+    }
+  };
+
+  const adjustShotClock = (amountMs: number) => {
+    const next = Math.max(0, shotClockMsRef.current + amountMs);
+    shotClockMsRef.current = next;
+    setShotClockMs(next);
+    if (isShotClockRunningRef.current) {
+      if (next <= 0) {
+        isShotClockRunningRef.current = false;
+        shotClockEndRef.current = null;
+        setIsShotClockRunning(false);
+        if (clockMsRef.current > 0 && settingsRef.current.soundEnabled) void playHorn('shotclock', settingsRef.current.soundVolume / 100);
+      } else {
+        shotClockEndRef.current = performance.now() + next;
+      }
+    }
+  };
+
+  const addLog = (message: string) => {
+    const entry: LogEntry = { time: formatTime(clockMsRef.current), msg: message, id: ++logSequenceRef.current };
+    setLogs(previous => {
+      const next = [entry, ...previous].slice(0, 50);
+      logsRef.current = next;
+      return next;
+    });
   };
 
   const saveHistorySnapshot = () => {
-    setHistory(prev => [...prev, { home: JSON.parse(JSON.stringify(home)), away: JSON.parse(JSON.stringify(away)), logs: [...logs] }].slice(-20));
+    const snapshot: HistorySnapshot = {
+      home: cloneTeam(homeRef.current),
+      away: cloneTeam(awayRef.current),
+      logs: cloneLogs(logsRef.current),
+    };
+    setHistory(previous => {
+      const next = [...previous, snapshot].slice(-20);
+      historyRef.current = next;
+      return next;
+    });
+    redoStackRef.current = [];
     setRedoStack([]);
   };
 
-  const updateScore = (team, points, playerId = null) => {
+  const updateScore = (team: TeamSide, points: number, playerId: string | null = null) => {
     saveHistorySnapshot();
-    const isHome = team === 'home';
-    const setter = isHome ? setHome : setAway;
-    const teamData = isHome ? home : away;
-    const newScore = Math.max(0, teamData.score + points);
-    
-    if (isHome) { setBlinkHome(true); setTimeout(() => setBlinkHome(false), 500); }
-    else { setBlinkAway(true); setTimeout(() => setBlinkAway(false), 500); }
-
-    let logMsg = `${teamData.name} ${points > 0 ? '+' : ''}${points} คะแนน`;
-    const newPlayers = [...teamData.players];
-    if (playerId) {
-      const pIdx = newPlayers.findIndex(p => p.id === playerId);
-      if (pIdx >= 0) {
-        newPlayers[pIdx].points = Math.max(0, newPlayers[pIdx].points + points);
-        logMsg = `${newPlayers[pIdx].name} (${teamData.name}) ${points > 0 ? '+' : ''}${points} คะแนน`;
-      }
+    const current = team === 'home' ? homeRef.current : awayRef.current;
+    const newPlayers = current.players.map(player => player.id === playerId
+      ? { ...player, points: Math.max(0, player.points + points) }
+      : player
+    );
+    const updated = { ...current, score: Math.max(0, current.score + points), players: newPlayers };
+    if (team === 'home') {
+      setHomeState(updated);
+      setBlinkHome(true);
+      window.setTimeout(() => setBlinkHome(false), 500);
+    } else {
+      setAwayState(updated);
+      setBlinkAway(true);
+      window.setTimeout(() => setBlinkAway(false), 500);
     }
-    setter({ ...teamData, score: newScore, players: newPlayers });
-    addLog(logMsg);
+
+    const player = playerId ? newPlayers.find(item => item.id === playerId) : null;
+    addLog(player
+      ? `${player.name} (${current.name}) ${points > 0 ? '+' : ''}${points} คะแนน`
+      : `${current.name} ${points > 0 ? '+' : ''}${points} คะแนน`
+    );
   };
 
-  const updateFouls = (team, amount, playerId = null) => {
+  const updateFouls = (team: TeamSide, amount: number, playerId: string | null = null) => {
     saveHistorySnapshot();
-    const isHome = team === 'home';
-    const setter = isHome ? setHome : setAway;
-    const teamData = isHome ? home : away;
-    const newFouls = Math.max(0, teamData.fouls + amount);
-    let logMsg = `${teamData.name} ฟาวล์ ${amount > 0 ? '+1' : '-1'}`;
-    const newPlayers = [...teamData.players];
-    if (playerId) {
-      const pIdx = newPlayers.findIndex(p => p.id === playerId);
-      if (pIdx >= 0) {
-        newPlayers[pIdx].fouls = Math.max(0, newPlayers[pIdx].fouls + amount);
-        logMsg = `${newPlayers[pIdx].name} (${teamData.name}) ฟาวล์ ${amount > 0 ? '+1' : '-1'}`;
-      }
-    }
-    setter({ ...teamData, fouls: newFouls, players: newPlayers });
-    addLog(logMsg);
+    const current = team === 'home' ? homeRef.current : awayRef.current;
+    const newPlayers = current.players.map(player => player.id === playerId
+      ? { ...player, fouls: Math.max(0, player.fouls + amount) }
+      : player
+    );
+    const updated = { ...current, fouls: Math.max(0, current.fouls + amount), players: newPlayers };
+    if (team === 'home') setHomeState(updated);
+    else setAwayState(updated);
+
+    const player = playerId ? newPlayers.find(item => item.id === playerId) : null;
+    addLog(player
+      ? `${player.name} (${current.name}) ฟาวล์ ${amount > 0 ? '+1' : '-1'}`
+      : `${current.name} ฟาวล์ ${amount > 0 ? '+1' : '-1'}`
+    );
   };
 
-  const startTimeout = (team) => {
-    const teamData = team === 'home' ? home : away;
-    if (teamData.timeouts <= 0) {
+  const startTimeout = (team: TeamSide) => {
+    const current = team === 'home' ? homeRef.current : awayRef.current;
+    if (current.timeouts <= 0) {
       showAlert('แจ้งเตือน', 'จำนวนเวลานอกสำหรับทีมนี้หมดแล้ว');
       return;
     }
-    setIsClockRunning(false);
-    setIsShotClockRunning(false);
-    if (team === 'home') setHome({ ...home, timeouts: home.timeouts - 1 });
-    else setAway({ ...away, timeouts: away.timeouts - 1 });
+
+    stopGameAndShotClocks();
+    const updated = { ...current, timeouts: current.timeouts - 1 };
+    if (team === 'home') setHomeState(updated);
+    else setAwayState(updated);
+
+    const duration = settingsRef.current.timeoutDuration * 1000;
+    activeTimeoutRef.current = team;
+    timeoutMsRef.current = duration;
+    timeoutEndRef.current = performance.now() + duration;
+    timeoutWarningPlayedRef.current = duration <= 10000;
     setActiveTimeout(team);
-    setTimeoutMs(settings.timeoutDuration * 1000);
-    addLog(`${teamData.name} ขอเวลานอก`);
+    setTimeoutMs(duration);
+    addLog(`${current.name} ขอเวลานอก`);
   };
 
   const stopTimeout = () => {
+    activeTimeoutRef.current = null;
+    timeoutMsRef.current = 0;
+    timeoutEndRef.current = null;
+    timeoutWarningPlayedRef.current = false;
     setActiveTimeout(null);
     setTimeoutMs(0);
   };
 
+  const getNextQuarter = (current: string) => {
+    const regulation = ['Q1', 'Q2', 'Q3', 'Q4'];
+    const regulationIndex = regulation.indexOf(current);
+    if (regulationIndex >= 0 && regulationIndex < regulation.length - 1) return regulation[regulationIndex + 1];
+    if (current === 'Q4') return 'OT';
+    if (current === 'OT') return 'OT2';
+    const overtimeMatch = current.match(/^OT(\d+)$/);
+    return overtimeMatch ? `OT${Number(overtimeMatch[1]) + 1}` : 'Q1';
+  };
+
   const nextQuarter = () => {
     showConfirm('ยืนยัน', 'ยืนยันการเปลี่ยนควอเตอร์? (ระบบจะรีเซ็ตเวลาและฟาวล์ทีม)', () => {
-      const qList = ["Q1", "Q2", "Q3", "Q4", "OT"];
-      const nextIdx = Math.min(qList.indexOf(quarter) + 1, 4);
-      setQuarter(qList[nextIdx]);
-      setHome({ ...home, fouls: 0 });
-      setAway({ ...away, fouls: 0 });
-      setClockMs(settings.quarterMinutes * 60000);
-      setShotClockMs(settings.shotClockSeconds * 1000);
-      setIsClockRunning(false);
-      setIsShotClockRunning(false);
-      addLog(`เริ่ม ${qList[nextIdx]}`);
+      if (activeTimeoutRef.current) stopTimeout();
+      stopGameAndShotClocks();
+      const next = getNextQuarter(quarterRef.current);
+      quarterRef.current = next;
+      setQuarter(next);
+      setHomeState({ ...homeRef.current, fouls: 0 });
+      setAwayState({ ...awayRef.current, fouls: 0 });
+      const nextClock = (next.startsWith('OT') ? settingsRef.current.overtimeMinutes : settingsRef.current.quarterMinutes) * 60000;
+      const nextShotClock = settingsRef.current.shotClockSeconds * 1000;
+      clockMsRef.current = nextClock;
+      shotClockMsRef.current = nextShotClock;
+      setClockMs(nextClock);
+      setShotClockMs(nextShotClock);
+      addLog(`เริ่ม ${next}`);
     });
   };
 
   const handleUndo = () => {
-    if (history.length === 0) return;
-    setRedoStack(prev => [{ home, away, logs }, ...prev]);
-    const prev = history[history.length - 1];
-    setHome(prev.home); setAway(prev.away); setLogs(prev.logs);
-    setHistory(history.slice(0, -1));
+    const currentHistory = historyRef.current;
+    if (currentHistory.length === 0) return;
+    const previous = currentHistory[currentHistory.length - 1];
+    const currentSnapshot: HistorySnapshot = { home: cloneTeam(homeRef.current), away: cloneTeam(awayRef.current), logs: cloneLogs(logsRef.current) };
+    const nextRedo = [currentSnapshot, ...redoStackRef.current];
+    redoStackRef.current = nextRedo;
+    setRedoStack(nextRedo);
+    const nextHistory = currentHistory.slice(0, -1);
+    historyRef.current = nextHistory;
+    setHistory(nextHistory);
+    setHomeState(cloneTeam(previous.home));
+    setAwayState(cloneTeam(previous.away));
+    const restoredLogs = cloneLogs(previous.logs);
+    logsRef.current = restoredLogs;
+    setLogs(restoredLogs);
   };
 
   const handleRedo = () => {
-    if (redoStack.length === 0) return;
-    setHistory(prev => [...prev, { home, away, logs }]);
-    const next = redoStack[0];
-    setHome(next.home); setAway(next.away); setLogs(next.logs);
-    setRedoStack(redoStack.slice(1));
+    const currentRedo = redoStackRef.current;
+    if (currentRedo.length === 0) return;
+    const next = currentRedo[0];
+    const currentSnapshot: HistorySnapshot = { home: cloneTeam(homeRef.current), away: cloneTeam(awayRef.current), logs: cloneLogs(logsRef.current) };
+    const nextHistory = [...historyRef.current, currentSnapshot].slice(-20);
+    historyRef.current = nextHistory;
+    setHistory(nextHistory);
+    const remainingRedo = currentRedo.slice(1);
+    redoStackRef.current = remainingRedo;
+    setRedoStack(remainingRedo);
+    setHomeState(cloneTeam(next.home));
+    setAwayState(cloneTeam(next.away));
+    const restoredLogs = cloneLogs(next.logs);
+    logsRef.current = restoredLogs;
+    setLogs(restoredLogs);
   };
 
   const openDisplayWindow = () => {
-    window.open(window.location.href + '?mode=display', 'ScoreboardDisplay', 'width=1280,height=720,menubar=no,toolbar=no');
+    const displayUrl = new URL(window.location.href);
+    displayUrl.searchParams.set('mode', 'display');
+    window.open(displayUrl.toString(), 'ScoreboardDisplay', 'width=1280,height=720,menubar=no,toolbar=no');
   };
 
   useEffect(() => {
     if (isDisplayMode) return;
-    const handleKeyDown = (e) => {
-      if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
-      if (modalConfig.isOpen) return; // Prevent shortcuts if a modal is open
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && ['INPUT', 'TEXTAREA'].includes(target.tagName)) return;
+      if (modalConfig.isOpen) return;
       switch(e.code) {
         case 'Space': e.preventDefault(); toggleClock(); break;
-        case 'KeyH': playHorn('quarter', settings.soundVolume / 100); break;
-        case 'ArrowLeft': setPossession('home'); break;
-        case 'ArrowRight': setPossession('away'); break;
+        case 'KeyH': if (settingsRef.current.soundEnabled) void playHorn('quarter', settingsRef.current.soundVolume / 100); break;
+        case 'ArrowLeft': possessionRef.current = 'home'; setPossession('home'); break;
+        case 'ArrowRight': possessionRef.current = 'away'; setPossession('away'); break;
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isClockRunning, clockMs, shotClockMs, settings, activeTimeout, isDisplayMode, modalConfig.isOpen]);
+  }, [isDisplayMode, modalConfig.isOpen]);
 
-  const renderFoulDots = (fouls, isBonus) => {
+  const renderFoulDots = (fouls: number, isBonus: boolean) => {
     const dots = [];
     for (let i = 0; i < settings.bonusFoulLimit; i++) {
       dots.push(<span key={i} className={`inline-block w-4 h-4 rounded-full mx-1 ${i < fouls ? 'bg-red-500' : 'bg-gray-700'}`}></span>);
@@ -522,7 +1025,7 @@ export default function Scoreboard() {
     );
   };
 
-  const renderScoreboardDisplay = (minimal = false) => {
+  const renderScoreboardDisplay = (_minimal = false) => {
     const homeBonus = home.fouls >= settings.bonusFoulLimit;
     const awayBonus = away.fouls >= settings.bonusFoulLimit;
     const clockColor = clockMs <= 60000 ? (clockMs <= 10000 ? 'text-red-500' : 'text-yellow-400') : 'text-white';
@@ -617,7 +1120,7 @@ export default function Scoreboard() {
     );
   };
 
-  const renderTeamControls = (type) => {
+  const renderTeamControls = (type: TeamSide) => {
     const data = type === 'home' ? home : away;
     return (
       <div className="bg-gray-800 p-4 rounded-xl space-y-4 border-t-4 shadow" style={{ borderColor: data.color }}>
@@ -635,8 +1138,10 @@ export default function Scoreboard() {
                   const parsed = parseInt(val);
                   if (!isNaN(parsed) && parsed >= 0) {
                     saveHistorySnapshot();
-                    type === 'home' ? setHome({...home, score: parsed}) : setAway({...away, score: parsed});
-                    addLog(`ตั้งคะแนน ${data.name} เป็น ${parsed}`);
+                    const current = type === 'home' ? homeRef.current : awayRef.current;
+                    const updated = { ...current, score: parsed };
+                    type === 'home' ? setHomeState(updated) : setAwayState(updated);
+                    addLog(`ตั้งคะแนน ${current.name} เป็น ${parsed}`);
                   }
                 });
               }} />
@@ -668,24 +1173,24 @@ export default function Scoreboard() {
           <h3 className="text-lg font-semibold text-gray-300 border-b border-gray-600 pb-2">ข้อมูลทั่วไป</h3>
           <div>
             <label className="block text-sm mb-1 text-gray-400">ชื่อการแข่งขัน</label>
-            <input type="text" value={settings.gameName} onChange={e => setSettings({...settings, gameName: e.target.value})} className="w-full bg-gray-900 p-2 rounded text-white border border-gray-700 focus:outline-none focus:border-blue-500" />
+            <input type="text" value={settings.gameName} onChange={(e: ChangeEvent<HTMLInputElement>) => setSettings({...settings, gameName: e.target.value})} className="w-full bg-gray-900 p-2 rounded text-white border border-gray-700 focus:outline-none focus:border-blue-500" />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm mb-1 text-gray-400">ชื่อทีมเหย้า</label>
-              <input type="text" value={home.name} onChange={e => setHome({...home, name: e.target.value})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
+              <input type="text" value={home.name} onChange={(e: ChangeEvent<HTMLInputElement>) => setHome({...home, name: e.target.value})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
             </div>
             <div>
               <label className="block text-sm mb-1 text-gray-400">สีทีมเหย้า</label>
-              <input type="color" value={home.color} onChange={e => setHome({...home, color: e.target.value})} className="w-full h-10 bg-gray-900 p-1 rounded border border-gray-700 cursor-pointer" />
+              <input type="color" value={home.color} onChange={(e: ChangeEvent<HTMLInputElement>) => setHome({...home, color: e.target.value})} className="w-full h-10 bg-gray-900 p-1 rounded border border-gray-700 cursor-pointer" />
             </div>
             <div>
               <label className="block text-sm mb-1 text-gray-400">ชื่อทีมเยือน</label>
-              <input type="text" value={away.name} onChange={e => setAway({...away, name: e.target.value})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
+              <input type="text" value={away.name} onChange={(e: ChangeEvent<HTMLInputElement>) => setAway({...away, name: e.target.value})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
             </div>
             <div>
               <label className="block text-sm mb-1 text-gray-400">สีทีมเยือน</label>
-              <input type="color" value={away.color} onChange={e => setAway({...away, color: e.target.value})} className="w-full h-10 bg-gray-900 p-1 rounded border border-gray-700 cursor-pointer" />
+              <input type="color" value={away.color} onChange={(e: ChangeEvent<HTMLInputElement>) => setAway({...away, color: e.target.value})} className="w-full h-10 bg-gray-900 p-1 rounded border border-gray-700 cursor-pointer" />
             </div>
           </div>
         </div>
@@ -695,39 +1200,39 @@ export default function Scoreboard() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm mb-1 text-gray-400">เวลาต่อควอเตอร์ (นาที)</label>
-              <input type="number" value={settings.quarterMinutes} onChange={e => setSettings({...settings, quarterMinutes: parseInt(e.target.value) || 10})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
+              <input type="number" value={settings.quarterMinutes} onChange={(e: ChangeEvent<HTMLInputElement>) => setSettings({...settings, quarterMinutes: parseInt(e.target.value) || 10})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
             </div>
             <div>
               <label className="block text-sm mb-1 text-gray-400">เวลานอก (วินาที)</label>
-              <input type="number" value={settings.timeoutDuration} onChange={e => setSettings({...settings, timeoutDuration: parseInt(e.target.value) || 60})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
+              <input type="number" value={settings.timeoutDuration} onChange={(e: ChangeEvent<HTMLInputElement>) => setSettings({...settings, timeoutDuration: parseInt(e.target.value) || 60})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
             </div>
             <div>
               <label className="block text-sm mb-1 text-gray-400">Shot Clock (วินาที)</label>
-              <input type="number" value={settings.shotClockSeconds} onChange={e => setSettings({...settings, shotClockSeconds: parseInt(e.target.value) || 24})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
+              <input type="number" value={settings.shotClockSeconds} onChange={(e: ChangeEvent<HTMLInputElement>) => setSettings({...settings, shotClockSeconds: parseInt(e.target.value) || 24})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
             </div>
             <div>
               <label className="block text-sm mb-1 text-gray-400">จำนวนเวลานอกต่อทีม</label>
-              <input type="number" value={settings.timeoutsPerTeam} onChange={e => {
+              <input type="number" value={settings.timeoutsPerTeam} onChange={(e: ChangeEvent<HTMLInputElement>) => {
                 const val = parseInt(e.target.value) || 3;
                 setSettings({...settings, timeoutsPerTeam: val});
-                setHome({...home, timeouts: val});
-                setAway({...away, timeouts: val});
+                setHomeState({...homeRef.current, timeouts: val});
+                setAwayState({...awayRef.current, timeouts: val});
               }} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
             </div>
             <div>
               <label className="block text-sm mb-1 text-gray-400">โบนัสฟาวล์ทีม (ครั้ง)</label>
-              <input type="number" value={settings.bonusFoulLimit} onChange={e => setSettings({...settings, bonusFoulLimit: parseInt(e.target.value) || 5})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
+              <input type="number" value={settings.bonusFoulLimit} onChange={(e: ChangeEvent<HTMLInputElement>) => setSettings({...settings, bonusFoulLimit: parseInt(e.target.value) || 5})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
             </div>
             <div>
               <label className="block text-sm mb-1 text-gray-400">ฟาวล์ผู้เล่น (Foul Out)</label>
-              <input type="number" value={settings.playerFoulOutLimit} onChange={e => setSettings({...settings, playerFoulOutLimit: parseInt(e.target.value) || 5})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
+              <input type="number" value={settings.playerFoulOutLimit} onChange={(e: ChangeEvent<HTMLInputElement>) => setSettings({...settings, playerFoulOutLimit: parseInt(e.target.value) || 5})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
             </div>
           </div>
           <div className="flex items-center gap-4 pt-4 border-t border-gray-700 mt-4">
              <label className="flex items-center gap-2 cursor-pointer font-semibold">
-               <input type="checkbox" checked={settings.soundEnabled} onChange={e => setSettings({...settings, soundEnabled: e.target.checked})} className="w-5 h-5 accent-blue-600" /> เปิดเสียง (ระบบ Web Audio)
+               <input type="checkbox" checked={settings.soundEnabled} onChange={(e: ChangeEvent<HTMLInputElement>) => setSettings({...settings, soundEnabled: e.target.checked})} className="w-5 h-5 accent-blue-600" /> เปิดเสียง (ระบบ Web Audio)
              </label>
-             {settings.soundEnabled && <input type="range" min="0" max="100" value={settings.soundVolume} onChange={e => setSettings({...settings, soundVolume: parseInt(e.target.value)})} className="flex-1 accent-blue-600" />}
+             {settings.soundEnabled && <input type="range" min="0" max="100" value={settings.soundVolume} onChange={(e: ChangeEvent<HTMLInputElement>) => setSettings({...settings, soundVolume: parseInt(e.target.value)})} className="flex-1 accent-blue-600" />}
           </div>
         </div>
       </div>
@@ -745,13 +1250,19 @@ export default function Scoreboard() {
   );
 
   const renderRosterPanel = () => {
-    const r = (team, setTeamObj) => (
+    const r = (team: TeamState, _setTeamObj: React.Dispatch<React.SetStateAction<TeamState>>) => (
       <div className="flex-1 bg-gray-800 p-5 rounded-xl border-t-4 shadow-xl" style={{ borderColor: team.color }}>
         <h3 className="text-xl font-bold mb-4 text-white flex items-center gap-2"><Users size={20}/> {team.name} - ผู้เล่น</h3>
         <button onClick={() => {
             showAddPlayer(team, (data) => {
               if (data && data.number) {
-                 setTeamObj({...team, players: [...team.players, { id: generateId(), number: data.number, name: data.name || `Player ${data.number}`, points: 0, fouls: 0, inGame: false }]});
+                 const side: TeamSide = team === home ? 'home' : 'away';
+
+                 const current = side === 'home' ? homeRef.current : awayRef.current;
+
+                 const updated = {...current, players: [...current.players, { id: generateId(), number: data.number, name: data.name || `Player ${data.number}`, points: 0, fouls: 0, inGame: false }]};
+
+                 if (side === 'home') setHomeState(updated); else setAwayState(updated);
               }
             });
         }} className="mb-4 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm font-semibold text-white flex items-center gap-2 transition-colors"><Plus size={16}/> เพิ่มผู้เล่น</button>
@@ -858,8 +1369,8 @@ export default function Scoreboard() {
                   <button onClick={toggleClock} className={`flex items-center gap-2 px-6 py-4 rounded-xl font-bold text-white shadow-lg transition-all ${isClockRunning ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-500 shadow-[0_0_15px_rgba(22,163,74,0.4)]'}`}>
                     {isClockRunning ? <><Square size={20}/> หยุดเวลา (Space)</> : <><Play size={20}/> เริ่มเวลา (Space)</>}
                   </button>
-                  <div className="flex flex-col gap-1 ml-2"><button onClick={() => setClockMs(m => m + 60000)} className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs font-semibold">+1 นาที</button><button onClick={() => setClockMs(m => m + 1000)} className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs font-semibold">+1 วิ</button></div>
-                  <div className="flex flex-col gap-1"><button onClick={() => setClockMs(m => Math.max(0, m - 60000))} className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs font-semibold">-1 นาที</button><button onClick={() => setClockMs(m => Math.max(0, m - 1000))} className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs font-semibold">-1 วิ</button></div>
+                  <div className="flex flex-col gap-1 ml-2"><button onClick={() => adjustGameClock(60000)} className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs font-semibold">+1 นาที</button><button onClick={() => adjustGameClock(1000)} className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs font-semibold">+1 วิ</button></div>
+                  <div className="flex flex-col gap-1"><button onClick={() => adjustGameClock(-60000)} className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs font-semibold">-1 นาที</button><button onClick={() => adjustGameClock(-1000)} className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs font-semibold">-1 วิ</button></div>
                   <button onClick={resetClock} className="p-3 bg-gray-700 hover:bg-gray-600 rounded-xl ml-2 text-gray-300 transition-colors" title="รีเซ็ตเวลา"><RotateCcw size={20}/></button>
                 </div>
                 <div className="flex items-center gap-3 bg-gray-950 p-3 rounded-xl border border-gray-800 shadow-inner">
@@ -868,8 +1379,8 @@ export default function Scoreboard() {
                   <button onClick={() => resetShotClock(settings.shotClockSeconds)} className="px-4 py-2.5 bg-blue-900 hover:bg-blue-800 text-blue-100 font-mono font-bold rounded-lg text-sm transition-colors">{settings.shotClockSeconds}</button>
                   <button onClick={() => resetShotClock(settings.shortShotClockSeconds)} className="px-4 py-2.5 bg-blue-900 hover:bg-blue-800 text-blue-100 font-mono font-bold rounded-lg text-sm transition-colors">{settings.shortShotClockSeconds}</button>
                   <div className="flex flex-col gap-1 ml-1">
-                    <button onClick={() => setShotClockMs(m => m + 1000)} className="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-[10px] font-semibold text-gray-400">+1</button>
-                    <button onClick={() => setShotClockMs(m => Math.max(0, m - 1000))} className="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-[10px] font-semibold text-gray-400">-1</button>
+                    <button onClick={() => adjustShotClock(1000)} className="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-[10px] font-semibold text-gray-400">+1</button>
+                    <button onClick={() => adjustShotClock(-1000)} className="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-[10px] font-semibold text-gray-400">-1</button>
                   </div>
                 </div>
               </div>
@@ -887,7 +1398,7 @@ export default function Scoreboard() {
                       <button onClick={() => setPossession('away')} className={`px-5 py-2 rounded-lg font-black transition-all ${possession === 'away' ? 'bg-yellow-500 text-black shadow-[0_0_10px_rgba(234,179,8,0.5)]' : 'bg-gray-800 text-gray-400'}`}>▶ เยือน</button>
                     </div>
                     <div className="flex gap-3">
-                       <button onClick={() => playHorn('quarter', settings.soundVolume/100)} className="px-4 py-3 bg-orange-700 hover:bg-orange-600 rounded-xl flex items-center gap-2 text-sm font-bold shadow-lg transition-colors"><Volume2 size={20}/> แตรยาว (H)</button>
+                       <button onClick={() => settings.soundEnabled && void playHorn('quarter', settings.soundVolume/100)} className="px-4 py-3 bg-orange-700 hover:bg-orange-600 rounded-xl flex items-center gap-2 text-sm font-bold shadow-lg transition-colors"><Volume2 size={20}/> แตรยาว (H)</button>
                        {activeTimeout && <button onClick={stopTimeout} className="px-4 py-3 bg-red-700 hover:bg-red-600 rounded-xl text-sm font-bold shadow-lg transition-colors flex items-center gap-2"><Clock size={20}/> จบเวลานอก</button>}
                     </div>
                  </div>
