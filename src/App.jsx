@@ -176,10 +176,16 @@ const CustomModal = ({ isOpen, type, title, message, defaultValue, onClose, onCo
     const [input2, setInput2] = useState('');
     useEffect(() => {
         if (isOpen) {
-            setInput1(defaultValue !== undefined ? String(defaultValue) : '');
-            setInput2('');
+            if (type === 'addPlayer' && defaultValue && typeof defaultValue === 'object') {
+                setInput1(String(defaultValue.number ?? ''));
+                setInput2(String(defaultValue.name ?? ''));
+            }
+            else {
+                setInput1(defaultValue !== undefined && defaultValue !== null ? String(defaultValue) : '');
+                setInput2('');
+            }
         }
-    }, [isOpen, defaultValue]);
+    }, [isOpen, defaultValue, type]);
     if (!isOpen)
         return null;
     return (<div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
@@ -569,7 +575,8 @@ export default function Scoreboard() {
     const showConfirm = (title, message, onConfirm) => setModalConfig({ isOpen: true, type: 'confirm', title, message, onConfirm });
     const showAlert = (title, message) => setModalConfig({ isOpen: true, type: 'alert', title, message, onConfirm: null });
     const showPrompt = (title, message, defaultValue, onConfirm) => setModalConfig({ isOpen: true, type: 'prompt', title, message, defaultValue, onConfirm });
-    const showAddPlayer = (team, onConfirm) => setModalConfig({ isOpen: true, type: 'addPlayer', title: `เพิ่มผู้เล่น ${team.name}`, message: '', onConfirm });
+    const showAddPlayer = (team, onConfirm) => setModalConfig({ isOpen: true, type: 'addPlayer', title: `เพิ่มผู้เล่น ${team.name}`, message: '', defaultValue: null, onConfirm });
+    const showEditPlayer = (team, player, onConfirm) => setModalConfig({ isOpen: true, type: 'addPlayer', title: `แก้ไขผู้เล่น ${team.name}`, message: 'แก้ไขหมายเลขเสื้อหรือชื่อผู้เล่น โดยคะแนนและฟาวล์เดิมจะยังคงอยู่', defaultValue: player, onConfirm });
     const closeModal = () => setModalConfig(previous => ({ ...previous, isOpen: false }));
     const setHomeState = (next) => {
         homeRef.current = next;
@@ -1129,21 +1136,60 @@ export default function Scoreboard() {
       </div>
     </div>);
     const renderRosterPanel = () => {
-        const r = (team, _setTeamObj) => (<div className="flex-1 bg-gray-800 p-5 rounded-xl border-t-4 shadow-xl" style={{ borderColor: team.color }}>
-        <h3 className="text-xl font-bold mb-4 text-white flex items-center gap-2"><Users size={20}/> {team.name} - ผู้เล่น</h3>
-        <button onClick={() => {
-                showAddPlayer(team, (data) => {
-                    if (data && data.number) {
-                        const side = team === home ? 'home' : 'away';
-                        const current = side === 'home' ? homeRef.current : awayRef.current;
-                        const updated = { ...current, players: [...current.players, { id: generateId(), number: data.number, name: data.name || `Player ${data.number}`, points: 0, fouls: 0, inGame: false }] };
-                        if (side === 'home')
-                            setHomeState(updated);
-                        else
-                            setAwayState(updated);
-                    }
+        const r = (team, side) => {
+            const setTeamState = side === 'home' ? setHomeState : setAwayState;
+            const sortedPlayers = [...team.players].sort((a, b) => b.points - a.points || a.fouls - b.fouls || String(a.number).localeCompare(String(b.number), undefined, { numeric: true }));
+            const recordedPlayerPoints = team.players.reduce((sum, player) => sum + player.points, 0);
+            const recordedPlayerFouls = team.players.reduce((sum, player) => sum + player.fouls, 0);
+            const topScorer = sortedPlayers.length > 0 ? sortedPlayers[0] : null;
+            const addPlayer = (data) => {
+                const number = String(data?.number ?? '').trim();
+                if (!number)
+                    return;
+                const current = side === 'home' ? homeRef.current : awayRef.current;
+                saveHistorySnapshot();
+                const player = {
+                    id: generateId(),
+                    number,
+                    name: String(data?.name ?? '').trim() || `Player ${number}`,
+                    points: 0,
+                    fouls: 0,
+                    inGame: false,
+                };
+                setTeamState({ ...current, players: [...current.players, player] });
+                addLog(`เพิ่มผู้เล่น ${player.name} หมายเลข ${player.number} (${current.name})`);
+            };
+            const editPlayer = (player, data) => {
+                const number = String(data?.number ?? '').trim();
+                if (!number)
+                    return;
+                const current = side === 'home' ? homeRef.current : awayRef.current;
+                const existing = current.players.find(item => item.id === player.id);
+                if (!existing)
+                    return;
+                saveHistorySnapshot();
+                const updatedPlayer = {
+                    ...existing,
+                    number,
+                    name: String(data?.name ?? '').trim() || `Player ${number}`,
+                };
+                setTeamState({
+                    ...current,
+                    players: current.players.map(item => item.id === player.id ? updatedPlayer : item),
                 });
-            }} className="mb-4 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm font-semibold text-white flex items-center gap-2 transition-colors"><Plus size={16}/> เพิ่มผู้เล่น</button>
+                addLog(`แก้ไขผู้เล่น ${existing.name} เป็น ${updatedPlayer.name} หมายเลข ${updatedPlayer.number} (${current.name})`);
+            };
+            const deletePlayer = (player) => {
+                const current = side === 'home' ? homeRef.current : awayRef.current;
+                if (!current.players.some(item => item.id === player.id))
+                    return;
+                saveHistorySnapshot();
+                setTeamState({ ...current, players: current.players.filter(item => item.id !== player.id) });
+                addLog(`ลบผู้เล่น ${player.name} หมายเลข ${player.number} (${current.name})`);
+            };
+            return (<div className="flex-1 bg-gray-800 p-5 rounded-xl border-t-4 shadow-xl" style={{ borderColor: team.color }}>
+        <h3 className="text-xl font-bold mb-4 text-white flex items-center gap-2"><Users size={20}/> {team.name} - ผู้เล่น</h3>
+        <button onClick={() => showAddPlayer(team, addPlayer)} className="mb-4 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm font-semibold text-white flex items-center gap-2 transition-colors"><Plus size={16}/> เพิ่มผู้เล่น</button>
         <div className="overflow-x-auto rounded-lg border border-gray-700">
           <table className="w-full text-sm text-left text-gray-300">
             <thead className="text-xs uppercase bg-gray-900 text-gray-400">
@@ -1155,19 +1201,51 @@ export default function Scoreboard() {
                   <td className="px-3 py-2">{p.name} {p.fouls >= settings.playerFoulOutLimit && <span className="text-xs bg-red-600 text-white px-2 py-0.5 rounded ml-2 shadow font-semibold">FOUL OUT</span>}</td>
                   <td className="px-3 py-2 font-mono text-lg font-bold">{p.points}</td>
                   <td className="px-3 py-2 font-mono text-lg font-bold text-red-400">{p.fouls}</td>
-                  <td className="px-3 py-2 flex gap-1">
-                     <button onClick={() => updateScore(team === home ? 'home' : 'away', 1, p.id)} className="px-2 py-1 bg-green-700 rounded hover:bg-green-600 text-xs font-bold">+1</button>
-                     <button onClick={() => updateScore(team === home ? 'home' : 'away', 2, p.id)} className="px-2 py-1 bg-green-700 rounded hover:bg-green-600 text-xs font-bold">+2</button>
-                     <button onClick={() => updateScore(team === home ? 'home' : 'away', 3, p.id)} className="px-2 py-1 bg-green-700 rounded hover:bg-green-600 text-xs font-bold">+3</button>
-                     <button onClick={() => updateFouls(team === home ? 'home' : 'away', 1, p.id)} className="px-2 py-1 bg-yellow-700 rounded hover:bg-yellow-600 text-xs font-bold ml-2" disabled={p.fouls >= settings.playerFoulOutLimit}>+F</button>
+                  <td className="px-3 py-2 flex flex-wrap gap-1 min-w-[270px]">
+                     <button onClick={() => updateScore(side, 1, p.id)} className="px-2 py-1 bg-green-700 rounded hover:bg-green-600 text-xs font-bold">+1</button>
+                     <button onClick={() => updateScore(side, 2, p.id)} className="px-2 py-1 bg-green-700 rounded hover:bg-green-600 text-xs font-bold">+2</button>
+                     <button onClick={() => updateScore(side, 3, p.id)} className="px-2 py-1 bg-green-700 rounded hover:bg-green-600 text-xs font-bold">+3</button>
+                     <button onClick={() => updateFouls(side, 1, p.id)} className="px-2 py-1 bg-yellow-700 rounded hover:bg-yellow-600 text-xs font-bold ml-2" disabled={p.fouls >= settings.playerFoulOutLimit}>+F</button>
+                     <button onClick={() => showEditPlayer(team, p, data => editPlayer(p, data))} className="px-2 py-1 bg-blue-700 rounded hover:bg-blue-600 text-xs font-bold ml-1">แก้ไข</button>
+                     <button onClick={() => showConfirm('ลบผู้เล่น', `ยืนยันการลบ ${p.name} หมายเลข ${p.number}? คะแนนทีมจะไม่ถูกเปลี่ยน`, () => deletePlayer(p))} className="px-2 py-1 bg-red-800 rounded hover:bg-red-700 text-xs font-bold">ลบ</button>
                   </td>
                 </tr>))}
             </tbody>
           </table>
           {team.players.length === 0 && <p className="text-center text-gray-500 py-8 bg-gray-900/50">ยังไม่มีรายชื่อผู้เล่นในทีมนี้</p>}
         </div>
+
+        <div className="mt-5 rounded-lg border border-gray-700 bg-gray-900/70 overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-700">
+            <h4 className="font-bold text-white">สถิติผู้เล่น</h4>
+            <p className="text-xs text-gray-400 mt-1">แสดงเฉพาะคะแนนและฟาวล์ที่บันทึกผ่านรายชื่อผู้เล่น</p>
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 p-3">
+            <div className="bg-gray-950 rounded-lg p-3 text-center"><div className="text-xs text-gray-500">ผู้เล่น</div><div className="text-2xl font-bold text-white">{team.players.length}</div></div>
+            <div className="bg-gray-950 rounded-lg p-3 text-center"><div className="text-xs text-gray-500">คะแนนผู้เล่นรวม</div><div className="text-2xl font-bold text-green-400">{recordedPlayerPoints}</div></div>
+            <div className="bg-gray-950 rounded-lg p-3 text-center"><div className="text-xs text-gray-500">ฟาวล์ผู้เล่นรวม</div><div className="text-2xl font-bold text-red-400">{recordedPlayerFouls}</div></div>
+            <div className="bg-gray-950 rounded-lg p-3 text-center"><div className="text-xs text-gray-500">ทำคะแนนสูงสุด</div><div className="text-base font-bold text-yellow-400 truncate">{topScorer ? `${topScorer.name} (${topScorer.points})` : '-'}</div></div>
+          </div>
+          {sortedPlayers.length > 0 && (<div className="overflow-x-auto border-t border-gray-700">
+            <table className="w-full text-sm text-left text-gray-300">
+              <thead className="text-xs uppercase bg-gray-950 text-gray-500">
+                <tr><th className="px-3 py-2">อันดับ</th><th className="px-3 py-2">ผู้เล่น</th><th className="px-3 py-2 text-center">PTS</th><th className="px-3 py-2 text-center">FLS</th><th className="px-3 py-2 text-center">สัดส่วนคะแนนทีม</th></tr>
+              </thead>
+              <tbody>
+                {sortedPlayers.map((player, index) => (<tr key={player.id} className="border-t border-gray-800">
+                  <td className="px-3 py-2 font-bold">{index + 1}</td>
+                  <td className="px-3 py-2"><span className="font-bold mr-2">#{player.number}</span>{player.name}</td>
+                  <td className="px-3 py-2 text-center font-mono font-bold text-green-400">{player.points}</td>
+                  <td className="px-3 py-2 text-center font-mono font-bold text-red-400">{player.fouls}</td>
+                  <td className="px-3 py-2 text-center font-mono">{team.score > 0 ? `${((player.points / team.score) * 100).toFixed(1)}%` : '0.0%'}</td>
+                </tr>))}
+              </tbody>
+            </table>
+          </div>)}
+        </div>
       </div>);
-        return <div className="flex flex-col md:flex-row gap-6 max-w-6xl mx-auto w-full">{r(home, setHome)}{r(away, setAway)}</div>;
+        };
+        return <div className="flex flex-col md:flex-row gap-6 max-w-6xl mx-auto w-full">{r(home, 'home')}{r(away, 'away')}</div>;
     };
     const renderSummaryPanel = () => (<div className="bg-white text-black p-8 rounded-xl max-w-4xl mx-auto shadow-2xl printable-area w-full">
       <style>{`@media print { body * { visibility: hidden; } .printable-area, .printable-area * { visibility: visible; } .printable-area { position: absolute; left: 0; top: 0; width: 100%; } .no-print { display: none; } }`}</style>
