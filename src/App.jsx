@@ -16,21 +16,50 @@ const playHorn = (type = 'quarter', volume = 0.5) => {
     gainNode.connect(ctx.destination);
     
     if (type === 'quarter') {
+      // ปรับปรุงเสียงแตรยาวให้มีความดุดันเหมือนแตรสนาม
       osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(150, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(100, ctx.currentTime + 1);
+      osc.frequency.setValueAtTime(120, ctx.currentTime);
+      
+      const osc2 = ctx.createOscillator();
+      osc2.type = 'sawtooth';
+      osc2.frequency.setValueAtTime(125, ctx.currentTime);
+      osc2.connect(gainNode);
+      
       gainNode.gain.setValueAtTime(volume, ctx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1.5);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 2.0);
+      
       osc.start();
-      osc.stop(ctx.currentTime + 1.5);
+      osc2.start();
+      osc.stop(ctx.currentTime + 2.0);
+      osc2.stop(ctx.currentTime + 2.0);
     } else if (type === 'shotclock') {
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(400, ctx.currentTime);
-      osc.frequency.setValueAtTime(300, ctx.currentTime + 0.2);
-      gainNode.gain.setValueAtTime(volume, ctx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.8);
+      // สังเคราะห์เสียง Buzzer ให้มีความทุ้มและแตกพร่าคล้ายของจริง
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(110, ctx.currentTime);
+      
+      // เพิ่ม Oscillator ตัวที่ 2 (ปรับความถี่เพี้ยนเล็กน้อยเพื่อสร้างเสียงรัว/Buzzer effect)
+      const osc2 = ctx.createOscillator();
+      osc2.type = 'sawtooth';
+      osc2.frequency.setValueAtTime(115, ctx.currentTime); 
+      osc2.connect(gainNode);
+      
+      // เพิ่ม Oscillator ตัวที่ 3 (คลื่นสี่เหลี่ยมเสียงทุ้มต่ำเพื่อสร้างมวลเสียง)
+      const osc3 = ctx.createOscillator();
+      osc3.type = 'square';
+      osc3.frequency.setValueAtTime(55, ctx.currentTime); 
+      osc3.connect(gainNode);
+
+      // ลด Gain ลงเล็กน้อยเพื่อป้องกันเสียงแตก (Clipping) จากการรวมคลื่น
+      gainNode.gain.setValueAtTime(volume / 2.5, ctx.currentTime);
+      gainNode.gain.setValueAtTime(volume / 2.5, ctx.currentTime + 1.0);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.2);
+      
       osc.start();
-      osc.stop(ctx.currentTime + 0.8);
+      osc2.start();
+      osc3.start();
+      osc.stop(ctx.currentTime + 1.2);
+      osc2.stop(ctx.currentTime + 1.2);
+      osc3.stop(ctx.currentTime + 1.2);
     } else if (type === 'timeout') {
       osc.type = 'sine';
       osc.frequency.setValueAtTime(800, ctx.currentTime);
@@ -97,6 +126,57 @@ const ControlButton = ({ onClick, icon: Icon, label, color = "bg-gray-700 hover:
   </button>
 );
 
+const CustomModal = ({ isOpen, type, title, message, defaultValue, onClose, onConfirm }) => {
+  const [input1, setInput1] = useState('');
+  const [input2, setInput2] = useState('');
+
+  useEffect(() => { 
+    if (isOpen) {
+      setInput1(defaultValue !== undefined ? String(defaultValue) : ''); 
+      setInput2(''); 
+    }
+  }, [isOpen, defaultValue]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-800 p-6 rounded-xl border border-gray-600 shadow-2xl max-w-sm w-full text-white transform transition-all">
+        <h3 className="text-xl font-bold mb-2">{title}</h3>
+        {message && <p className="text-gray-300 mb-4 text-sm">{message}</p>}
+
+        {type === 'prompt' && (
+          <input type="number" value={input1} onChange={e => setInput1(e.target.value)} className="w-full bg-gray-900 border border-gray-700 p-2 rounded mb-4 text-white focus:outline-none focus:border-blue-500" autoFocus />
+        )}
+        {type === 'addPlayer' && (
+          <div className="flex flex-col gap-3 mb-4">
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">หมายเลขเสื้อ *</label>
+              <input type="text" placeholder="เช่น 0, 23, 99" value={input1} onChange={e => setInput1(e.target.value)} className="w-full bg-gray-900 border border-gray-700 p-2 rounded text-white focus:outline-none focus:border-blue-500" autoFocus />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">ชื่อผู้เล่น (ตัวเลือก)</label>
+              <input type="text" placeholder="ชื่อผู้เล่น" value={input2} onChange={e => setInput2(e.target.value)} className="w-full bg-gray-900 border border-gray-700 p-2 rounded text-white focus:outline-none focus:border-blue-500" />
+            </div>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-3 mt-6">
+          {type !== 'alert' && (
+            <button onClick={onClose} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 transition-colors rounded-lg text-sm font-semibold">ยกเลิก</button>
+          )}
+          <button onClick={() => {
+            if (type === 'prompt') onConfirm(input1);
+            else if (type === 'addPlayer') onConfirm({ number: input1, name: input2 });
+            else if (onConfirm) onConfirm();
+            onClose();
+          }} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 transition-colors rounded-lg text-sm font-bold shadow-lg">ตกลง</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function Scoreboard() {
   const isDisplayMode = new URLSearchParams(window.location.search).get('mode') === 'display';
 
@@ -118,11 +198,14 @@ export default function Scoreboard() {
   const [blinkHome, setBlinkHome] = useState(false);
   const [blinkAway, setBlinkAway] = useState(false);
 
+  // Modal State mapping
+  const [modalConfig, setModalConfig] = useState({ isOpen: false, type: 'alert', title: '', message: '', defaultValue: '', onConfirm: null });
+
   const clockRef = useRef(null);
   const lastTickRef = useRef(Date.now());
   const bcRef = useRef(null);
   
-  // ใช้ useRef เพื่อเก็บ State ล่าสุดไว้ตอบกลับตอนจอร้องขอ
+  // Use useRef to keep the latest state for replying when display window requests
   const stateRef = useRef();
   useEffect(() => {
     stateRef.current = {
@@ -135,7 +218,7 @@ export default function Scoreboard() {
     bcRef.current = new BroadcastChannel('basketball_scoreboard');
     
     if (isDisplayMode) {
-      // ดึงข้อมูลเบื้องต้นจาก LocalStorage ทันทีที่เปิดหน้าจอ
+      // Fetch initial data from LocalStorage
       const saved = localStorage.getItem('scoreboard_state');
       if (saved) {
         try {
@@ -148,7 +231,7 @@ export default function Scoreboard() {
         } catch (e) {}
       }
 
-      // ร้องขอข้อมูลล่าสุดจากหน้าควบคุมทันที
+      // Request latest data from the control panel
       bcRef.current.postMessage({ type: 'REQUEST_SYNC' });
 
       bcRef.current.onmessage = (event) => {
@@ -170,7 +253,7 @@ export default function Scoreboard() {
         }
       };
     } else {
-      // โหลดข้อมูลจาก LocalStorage ตอนเปิดระบบควบคุม
+      // Load from LocalStorage for Control Panel
       const saved = localStorage.getItem('scoreboard_state');
       if (saved) {
         try {
@@ -184,7 +267,7 @@ export default function Scoreboard() {
         } catch (e) {}
       }
 
-      // ฟังคำร้องขอจากจอแสดงผล หากมีการขอให้ส่งข้อมูลล่าสุดไปให้
+      // Listen for sync requests from Display Window
       bcRef.current.onmessage = (event) => {
         if (event.data.type === 'REQUEST_SYNC' && stateRef.current) {
           bcRef.current.postMessage({ type: 'SYNC_STATE', state: stateRef.current });
@@ -276,6 +359,12 @@ export default function Scoreboard() {
   }, [isClockRunning, isShotClockRunning, activeTimeout, settings, isDisplayMode]);
 
 
+  const showConfirm = (title, message, onConfirm) => setModalConfig({ isOpen: true, type: 'confirm', title, message, onConfirm });
+  const showAlert = (title, message) => setModalConfig({ isOpen: true, type: 'alert', title, message, onConfirm: null });
+  const showPrompt = (title, message, defaultValue, onConfirm) => setModalConfig({ isOpen: true, type: 'prompt', title, message, defaultValue, onConfirm });
+  const showAddPlayer = (team, onConfirm) => setModalConfig({ isOpen: true, type: 'addPlayer', title: `เพิ่มผู้เล่น ${team.name}`, message: '', onConfirm });
+  const closeModal = () => setModalConfig({ ...modalConfig, isOpen: false });
+
   const toggleClock = () => {
     if (activeTimeout) return;
     setIsClockRunning(!isClockRunning);
@@ -284,11 +373,11 @@ export default function Scoreboard() {
   };
 
   const resetClock = () => {
-    if (window.confirm('ยืนยันการรีเซ็ตเวลาการแข่งขัน?')) {
+    showConfirm('ยืนยันการทำรายการ', 'ยืนยันการรีเซ็ตเวลาการแข่งขัน?', () => {
       setIsClockRunning(false);
       setClockMs(settings.quarterMinutes * 60000);
       setShotClockMs(settings.shotClockSeconds * 1000);
-    }
+    });
   };
 
   const toggleShotClock = () => setIsShotClockRunning(!isShotClockRunning);
@@ -351,7 +440,10 @@ export default function Scoreboard() {
 
   const startTimeout = (team) => {
     const teamData = team === 'home' ? home : away;
-    if (teamData.timeouts <= 0) return alert('จำนวนเวลานอกหมดแล้ว');
+    if (teamData.timeouts <= 0) {
+      showAlert('แจ้งเตือน', 'จำนวนเวลานอกสำหรับทีมนี้หมดแล้ว');
+      return;
+    }
     setIsClockRunning(false);
     setIsShotClockRunning(false);
     if (team === 'home') setHome({ ...home, timeouts: home.timeouts - 1 });
@@ -367,7 +459,7 @@ export default function Scoreboard() {
   };
 
   const nextQuarter = () => {
-    if (window.confirm('ยืนยันการเปลี่ยนควอเตอร์? (ระบบจะรีเซ็ตเวลาและฟาวล์ทีม)')) {
+    showConfirm('ยืนยัน', 'ยืนยันการเปลี่ยนควอเตอร์? (ระบบจะรีเซ็ตเวลาและฟาวล์ทีม)', () => {
       const qList = ["Q1", "Q2", "Q3", "Q4", "OT"];
       const nextIdx = Math.min(qList.indexOf(quarter) + 1, 4);
       setQuarter(qList[nextIdx]);
@@ -378,7 +470,7 @@ export default function Scoreboard() {
       setIsClockRunning(false);
       setIsShotClockRunning(false);
       addLog(`เริ่ม ${qList[nextIdx]}`);
-    }
+    });
   };
 
   const handleUndo = () => {
@@ -405,9 +497,9 @@ export default function Scoreboard() {
     if (isDisplayMode) return;
     const handleKeyDown = (e) => {
       if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+      if (modalConfig.isOpen) return; // Prevent shortcuts if a modal is open
       switch(e.code) {
         case 'Space': e.preventDefault(); toggleClock(); break;
-        case 'KeyR': if (e.shiftKey) resetClock(); break;
         case 'KeyH': playHorn('quarter', settings.soundVolume / 100); break;
         case 'ArrowLeft': setPossession('home'); break;
         case 'ArrowRight': setPossession('away'); break;
@@ -415,7 +507,7 @@ export default function Scoreboard() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isClockRunning, clockMs, shotClockMs, settings, activeTimeout, isDisplayMode]);
+  }, [isClockRunning, clockMs, shotClockMs, settings, activeTimeout, isDisplayMode, modalConfig.isOpen]);
 
   const renderFoulDots = (fouls, isBonus) => {
     const dots = [];
@@ -459,7 +551,7 @@ export default function Scoreboard() {
                 {renderFoulDots(home.fouls, homeBonus)}
               </div>
               <div className="flex flex-col items-center">
-                <span className="text-gray-400 uppercase font-bold text-xl">T.O.L.</span>
+                <span className="text-gray-400 uppercase font-bold text-base md:text-xl text-center leading-tight">Time Outs Left</span>
                 <div className="flex gap-2 mt-2">
                   {[...Array(settings.timeoutsPerTeam)].map((_, i) => (
                     <div key={i} className={`w-8 h-3 rounded-sm ${i < home.timeouts ? 'bg-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.6)]' : 'bg-gray-800'}`}></div>
@@ -511,7 +603,7 @@ export default function Scoreboard() {
                 {renderFoulDots(away.fouls, awayBonus)}
               </div>
               <div className="flex flex-col items-center">
-                <span className="text-gray-400 uppercase font-bold text-xl">T.O.L.</span>
+                <span className="text-gray-400 uppercase font-bold text-base md:text-xl text-center leading-tight">Time Outs Left</span>
                 <div className="flex gap-2 mt-2">
                   {[...Array(settings.timeoutsPerTeam)].map((_, i) => (
                     <div key={i} className={`w-8 h-3 rounded-sm ${i < away.timeouts ? 'bg-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.6)]' : 'bg-gray-800'}`}></div>
@@ -528,7 +620,7 @@ export default function Scoreboard() {
   const renderTeamControls = (type) => {
     const data = type === 'home' ? home : away;
     return (
-      <div className="bg-gray-800 p-4 rounded-xl space-y-4 border-t-4" style={{ borderColor: data.color }}>
+      <div className="bg-gray-800 p-4 rounded-xl space-y-4 border-t-4 shadow" style={{ borderColor: data.color }}>
         <h3 className="text-xl font-bold text-center text-white">{data.name}</h3>
         <div className="space-y-2">
           <div className="text-gray-400 text-xs font-semibold uppercase">Score</div>
@@ -539,12 +631,14 @@ export default function Scoreboard() {
             <ControlButton label="-1" color="bg-red-800 hover:bg-red-700" onClick={() => updateScore(type, -1)} />
             <div className="col-span-2">
               <ControlButton label="ตั้งคะแนน" icon={Settings} onClick={() => {
-                const val = prompt(`ตั้งคะแนน ${data.name}:`, data.score);
-                if (val !== null && !isNaN(val)) {
-                  saveHistorySnapshot();
-                  type === 'home' ? setHome({...home, score: parseInt(val)}) : setAway({...away, score: parseInt(val)});
-                  addLog(`ตั้งคะแนน ${data.name} เป็น ${val}`);
-                }
+                showPrompt('ตั้งคะแนน', `ตั้งคะแนนใหม่สำหรับ ${data.name}:`, data.score, (val) => {
+                  const parsed = parseInt(val);
+                  if (!isNaN(parsed) && parsed >= 0) {
+                    saveHistorySnapshot();
+                    type === 'home' ? setHome({...home, score: parsed}) : setAway({...away, score: parsed});
+                    addLog(`ตั้งคะแนน ${data.name} เป็น ${parsed}`);
+                  }
+                });
               }} />
             </div>
           </div>
@@ -567,31 +661,31 @@ export default function Scoreboard() {
   };
 
   const renderSettingsPanel = () => (
-    <div className="bg-gray-800 p-6 rounded-xl text-white max-w-4xl mx-auto space-y-6">
+    <div className="bg-gray-800 p-6 rounded-xl text-white max-w-4xl mx-auto space-y-6 shadow-xl w-full">
       <h2 className="text-2xl font-bold flex items-center gap-2"><Settings /> ตั้งค่าการแข่งขัน</h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div className="space-y-4">
           <h3 className="text-lg font-semibold text-gray-300 border-b border-gray-600 pb-2">ข้อมูลทั่วไป</h3>
           <div>
-            <label className="block text-sm mb-1">ชื่อการแข่งขัน</label>
-            <input type="text" value={settings.gameName} onChange={e => setSettings({...settings, gameName: e.target.value})} className="w-full bg-gray-700 p-2 rounded text-white border border-gray-600" />
+            <label className="block text-sm mb-1 text-gray-400">ชื่อการแข่งขัน</label>
+            <input type="text" value={settings.gameName} onChange={e => setSettings({...settings, gameName: e.target.value})} className="w-full bg-gray-900 p-2 rounded text-white border border-gray-700 focus:outline-none focus:border-blue-500" />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm mb-1">ชื่อทีมเหย้า</label>
-              <input type="text" value={home.name} onChange={e => setHome({...home, name: e.target.value})} className="w-full bg-gray-700 p-2 rounded" />
+              <label className="block text-sm mb-1 text-gray-400">ชื่อทีมเหย้า</label>
+              <input type="text" value={home.name} onChange={e => setHome({...home, name: e.target.value})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
             </div>
             <div>
-              <label className="block text-sm mb-1">สีทีมเหย้า</label>
-              <input type="color" value={home.color} onChange={e => setHome({...home, color: e.target.value})} className="w-full h-10 bg-gray-700 p-1 rounded" />
+              <label className="block text-sm mb-1 text-gray-400">สีทีมเหย้า</label>
+              <input type="color" value={home.color} onChange={e => setHome({...home, color: e.target.value})} className="w-full h-10 bg-gray-900 p-1 rounded border border-gray-700 cursor-pointer" />
             </div>
             <div>
-              <label className="block text-sm mb-1">ชื่อทีมเยือน</label>
-              <input type="text" value={away.name} onChange={e => setAway({...away, name: e.target.value})} className="w-full bg-gray-700 p-2 rounded" />
+              <label className="block text-sm mb-1 text-gray-400">ชื่อทีมเยือน</label>
+              <input type="text" value={away.name} onChange={e => setAway({...away, name: e.target.value})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
             </div>
             <div>
-              <label className="block text-sm mb-1">สีทีมเยือน</label>
-              <input type="color" value={away.color} onChange={e => setAway({...away, color: e.target.value})} className="w-full h-10 bg-gray-700 p-1 rounded" />
+              <label className="block text-sm mb-1 text-gray-400">สีทีมเยือน</label>
+              <input type="color" value={away.color} onChange={e => setAway({...away, color: e.target.value})} className="w-full h-10 bg-gray-900 p-1 rounded border border-gray-700 cursor-pointer" />
             </div>
           </div>
         </div>
@@ -600,48 +694,51 @@ export default function Scoreboard() {
           <h3 className="text-lg font-semibold text-gray-300 border-b border-gray-600 pb-2">กติกาและเวลา</h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm mb-1">เวลาต่อควอเตอร์ (นาที)</label>
-              <input type="number" value={settings.quarterMinutes} onChange={e => setSettings({...settings, quarterMinutes: parseInt(e.target.value) || 10})} className="w-full bg-gray-700 p-2 rounded" />
+              <label className="block text-sm mb-1 text-gray-400">เวลาต่อควอเตอร์ (นาที)</label>
+              <input type="number" value={settings.quarterMinutes} onChange={e => setSettings({...settings, quarterMinutes: parseInt(e.target.value) || 10})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
             </div>
             <div>
-              <label className="block text-sm mb-1">เวลานอก (วินาที)</label>
-              <input type="number" value={settings.timeoutDuration} onChange={e => setSettings({...settings, timeoutDuration: parseInt(e.target.value) || 60})} className="w-full bg-gray-700 p-2 rounded" />
+              <label className="block text-sm mb-1 text-gray-400">เวลานอก (วินาที)</label>
+              <input type="number" value={settings.timeoutDuration} onChange={e => setSettings({...settings, timeoutDuration: parseInt(e.target.value) || 60})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
             </div>
             <div>
-              <label className="block text-sm mb-1">Shot Clock (วินาที)</label>
-              <input type="number" value={settings.shotClockSeconds} onChange={e => setSettings({...settings, shotClockSeconds: parseInt(e.target.value) || 24})} className="w-full bg-gray-700 p-2 rounded" />
+              <label className="block text-sm mb-1 text-gray-400">Shot Clock (วินาที)</label>
+              <input type="number" value={settings.shotClockSeconds} onChange={e => setSettings({...settings, shotClockSeconds: parseInt(e.target.value) || 24})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
             </div>
             <div>
-              <label className="block text-sm mb-1">จำนวนเวลานอกต่อทีม</label>
+              <label className="block text-sm mb-1 text-gray-400">จำนวนเวลานอกต่อทีม</label>
               <input type="number" value={settings.timeoutsPerTeam} onChange={e => {
                 const val = parseInt(e.target.value) || 3;
                 setSettings({...settings, timeoutsPerTeam: val});
                 setHome({...home, timeouts: val});
                 setAway({...away, timeouts: val});
-              }} className="w-full bg-gray-700 p-2 rounded" />
+              }} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
             </div>
             <div>
-              <label className="block text-sm mb-1">โบนัสฟาวล์ทีม (ครั้ง)</label>
-              <input type="number" value={settings.bonusFoulLimit} onChange={e => setSettings({...settings, bonusFoulLimit: parseInt(e.target.value) || 5})} className="w-full bg-gray-700 p-2 rounded" />
+              <label className="block text-sm mb-1 text-gray-400">โบนัสฟาวล์ทีม (ครั้ง)</label>
+              <input type="number" value={settings.bonusFoulLimit} onChange={e => setSettings({...settings, bonusFoulLimit: parseInt(e.target.value) || 5})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
             </div>
             <div>
-              <label className="block text-sm mb-1">ฟาวล์ผู้เล่น (Foul Out)</label>
-              <input type="number" value={settings.playerFoulOutLimit} onChange={e => setSettings({...settings, playerFoulOutLimit: parseInt(e.target.value) || 5})} className="w-full bg-gray-700 p-2 rounded" />
+              <label className="block text-sm mb-1 text-gray-400">ฟาวล์ผู้เล่น (Foul Out)</label>
+              <input type="number" value={settings.playerFoulOutLimit} onChange={e => setSettings({...settings, playerFoulOutLimit: parseInt(e.target.value) || 5})} className="w-full bg-gray-900 p-2 rounded border border-gray-700" />
             </div>
           </div>
-          <div className="flex items-center gap-4 pt-4">
-             <label className="flex items-center gap-2 cursor-pointer">
-               <input type="checkbox" checked={settings.soundEnabled} onChange={e => setSettings({...settings, soundEnabled: e.target.checked})} className="w-5 h-5" /> เปิดเสียง
+          <div className="flex items-center gap-4 pt-4 border-t border-gray-700 mt-4">
+             <label className="flex items-center gap-2 cursor-pointer font-semibold">
+               <input type="checkbox" checked={settings.soundEnabled} onChange={e => setSettings({...settings, soundEnabled: e.target.checked})} className="w-5 h-5 accent-blue-600" /> เปิดเสียง (ระบบ Web Audio)
              </label>
-             {settings.soundEnabled && <input type="range" min="0" max="100" value={settings.soundVolume} onChange={e => setSettings({...settings, soundVolume: parseInt(e.target.value)})} />}
+             {settings.soundEnabled && <input type="range" min="0" max="100" value={settings.soundVolume} onChange={e => setSettings({...settings, soundVolume: parseInt(e.target.value)})} className="flex-1 accent-blue-600" />}
           </div>
         </div>
       </div>
       <div className="flex justify-end gap-4 mt-8 pt-4 border-t border-gray-700">
         <button onClick={() => {
-            if(window.confirm('ล้างข้อมูลการแข่งขันทั้งหมด?')) { localStorage.removeItem('scoreboard_state'); window.location.reload(); }
+            showConfirm('ล้างข้อมูล', 'ล้างข้อมูลการแข่งขันทั้งหมดและเริ่มใหม่?', () => { 
+              localStorage.removeItem('scoreboard_state'); 
+              window.location.reload(); 
+            });
           }} 
-          className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-white flex items-center gap-2"><Trash2 size={18} /> เริ่มการแข่งขันใหม่ (Reset All)
+          className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-white flex items-center gap-2 shadow font-semibold transition-colors"><Trash2 size={18} /> เริ่มการแข่งขันใหม่ (Reset All)
         </button>
       </div>
     </div>
@@ -649,56 +746,58 @@ export default function Scoreboard() {
 
   const renderRosterPanel = () => {
     const r = (team, setTeamObj) => (
-      <div className="flex-1 bg-gray-800 p-4 rounded-xl border-t-4" style={{ borderColor: team.color }}>
-        <h3 className="text-xl font-bold mb-4 text-white">{team.name} - ผู้เล่น</h3>
+      <div className="flex-1 bg-gray-800 p-5 rounded-xl border-t-4 shadow-xl" style={{ borderColor: team.color }}>
+        <h3 className="text-xl font-bold mb-4 text-white flex items-center gap-2"><Users size={20}/> {team.name} - ผู้เล่น</h3>
         <button onClick={() => {
-          const num = prompt('หมายเลขเสื้อ:'); if (!num) return;
-          const name = prompt('ชื่อผู้เล่น:');
-          setTeamObj({...team, players: [...team.players, { id: generateId(), number: num, name: name || `Player ${num}`, points: 0, fouls: 0, inGame: false }]});
-        }} className="mb-4 px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-sm text-white flex items-center gap-1"><Plus size={16}/> เพิ่มผู้เล่น</button>
-        <div className="overflow-x-auto">
+            showAddPlayer(team, (data) => {
+              if (data && data.number) {
+                 setTeamObj({...team, players: [...team.players, { id: generateId(), number: data.number, name: data.name || `Player ${data.number}`, points: 0, fouls: 0, inGame: false }]});
+              }
+            });
+        }} className="mb-4 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm font-semibold text-white flex items-center gap-2 transition-colors"><Plus size={16}/> เพิ่มผู้เล่น</button>
+        <div className="overflow-x-auto rounded-lg border border-gray-700">
           <table className="w-full text-sm text-left text-gray-300">
-            <thead className="text-xs uppercase bg-gray-700 text-gray-400">
-              <tr><th className="px-2 py-2">#</th><th className="px-2 py-2">ชื่อ</th><th className="px-2 py-2">PTS</th><th className="px-2 py-2">FLS</th><th className="px-2 py-2">จัดการ</th></tr>
+            <thead className="text-xs uppercase bg-gray-900 text-gray-400">
+              <tr><th className="px-3 py-3 rounded-tl-lg">#</th><th className="px-3 py-3">ชื่อ</th><th className="px-3 py-3">PTS</th><th className="px-3 py-3">FLS</th><th className="px-3 py-3 rounded-tr-lg">จัดการ</th></tr>
             </thead>
             <tbody>
               {team.players.map(p => (
-                <tr key={p.id} className={`border-b border-gray-700 ${p.fouls >= settings.playerFoulOutLimit ? 'bg-red-900/50' : ''}`}>
-                  <td className="px-2 py-2 font-bold">{p.number}</td>
-                  <td className="px-2 py-2">{p.name} {p.fouls >= settings.playerFoulOutLimit && <span className="text-xs bg-red-600 text-white px-1 rounded ml-1">FOUL OUT</span>}</td>
-                  <td className="px-2 py-2 font-mono text-lg">{p.points}</td>
-                  <td className="px-2 py-2 font-mono text-lg text-red-400">{p.fouls}</td>
-                  <td className="px-2 py-2 flex gap-1">
-                     <button onClick={() => updateScore(team === home ? 'home' : 'away', 1, p.id)} className="px-2 py-1 bg-green-700 rounded hover:bg-green-600 text-xs">+1</button>
-                     <button onClick={() => updateScore(team === home ? 'home' : 'away', 2, p.id)} className="px-2 py-1 bg-green-700 rounded hover:bg-green-600 text-xs">+2</button>
-                     <button onClick={() => updateScore(team === home ? 'home' : 'away', 3, p.id)} className="px-2 py-1 bg-green-700 rounded hover:bg-green-600 text-xs">+3</button>
-                     <button onClick={() => updateFouls(team === home ? 'home' : 'away', 1, p.id)} className="px-2 py-1 bg-yellow-700 rounded hover:bg-yellow-600 text-xs" disabled={p.fouls >= settings.playerFoulOutLimit}>+F</button>
+                <tr key={p.id} className={`border-t border-gray-700 ${p.fouls >= settings.playerFoulOutLimit ? 'bg-red-900/30' : 'hover:bg-gray-700/50'}`}>
+                  <td className="px-3 py-2 font-bold">{p.number}</td>
+                  <td className="px-3 py-2">{p.name} {p.fouls >= settings.playerFoulOutLimit && <span className="text-xs bg-red-600 text-white px-2 py-0.5 rounded ml-2 shadow font-semibold">FOUL OUT</span>}</td>
+                  <td className="px-3 py-2 font-mono text-lg font-bold">{p.points}</td>
+                  <td className="px-3 py-2 font-mono text-lg font-bold text-red-400">{p.fouls}</td>
+                  <td className="px-3 py-2 flex gap-1">
+                     <button onClick={() => updateScore(team === home ? 'home' : 'away', 1, p.id)} className="px-2 py-1 bg-green-700 rounded hover:bg-green-600 text-xs font-bold">+1</button>
+                     <button onClick={() => updateScore(team === home ? 'home' : 'away', 2, p.id)} className="px-2 py-1 bg-green-700 rounded hover:bg-green-600 text-xs font-bold">+2</button>
+                     <button onClick={() => updateScore(team === home ? 'home' : 'away', 3, p.id)} className="px-2 py-1 bg-green-700 rounded hover:bg-green-600 text-xs font-bold">+3</button>
+                     <button onClick={() => updateFouls(team === home ? 'home' : 'away', 1, p.id)} className="px-2 py-1 bg-yellow-700 rounded hover:bg-yellow-600 text-xs font-bold ml-2" disabled={p.fouls >= settings.playerFoulOutLimit}>+F</button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {team.players.length === 0 && <p className="text-center text-gray-500 mt-4">ยังไม่มีรายชื่อผู้เล่น</p>}
+          {team.players.length === 0 && <p className="text-center text-gray-500 py-8 bg-gray-900/50">ยังไม่มีรายชื่อผู้เล่นในทีมนี้</p>}
         </div>
       </div>
     );
-    return <div className="flex flex-col md:flex-row gap-6 max-w-6xl mx-auto">{r(home, setHome)}{r(away, setAway)}</div>;
+    return <div className="flex flex-col md:flex-row gap-6 max-w-6xl mx-auto w-full">{r(home, setHome)}{r(away, setAway)}</div>;
   };
 
   const renderSummaryPanel = () => (
-    <div className="bg-white text-black p-8 rounded max-w-4xl mx-auto shadow-lg printable-area">
+    <div className="bg-white text-black p-8 rounded-xl max-w-4xl mx-auto shadow-2xl printable-area w-full">
       <style>{`@media print { body * { visibility: hidden; } .printable-area, .printable-area * { visibility: visible; } .printable-area { position: absolute; left: 0; top: 0; width: 100%; } .no-print { display: none; } }`}</style>
-      <div className="text-center border-b-2 border-gray-800 pb-4 mb-6">
+      <div className="text-center border-b-2 border-gray-300 pb-4 mb-6">
         <h1 className="text-3xl font-black uppercase mb-2">{settings.gameName}</h1>
-        <p className="text-gray-600">สรุปผลการแข่งขัน • {new Date().toLocaleDateString('th-TH')}</p>
+        <p className="text-gray-600 font-medium">สรุปผลการแข่งขัน • {new Date().toLocaleDateString('th-TH')}</p>
       </div>
-      <div className="flex justify-between items-center mb-8 bg-gray-100 p-6 rounded-xl">
-        <div className="text-center w-1/3"><h2 className="text-2xl font-bold" style={{ color: home.color }}>{home.name}</h2><p className="text-6xl font-bold mt-2">{home.score}</p><p className="text-sm text-gray-500 mt-2">ฟาวล์รวม: {home.fouls}</p></div>
-        <div className="text-2xl font-black text-gray-400">VS</div>
-        <div className="text-center w-1/3"><h2 className="text-2xl font-bold" style={{ color: away.color }}>{away.name}</h2><p className="text-6xl font-bold mt-2">{away.score}</p><p className="text-sm text-gray-500 mt-2">ฟาวล์รวม: {away.fouls}</p></div>
+      <div className="flex justify-between items-center mb-8 bg-gray-50 p-6 rounded-xl border border-gray-200">
+        <div className="text-center w-1/3"><h2 className="text-3xl font-black mb-2" style={{ color: home.color }}>{home.name}</h2><p className="text-7xl font-bold leading-none">{home.score}</p><p className="text-sm text-gray-500 mt-3 font-semibold uppercase">ฟาวล์รวม: {home.fouls}</p></div>
+        <div className="text-3xl font-black text-gray-300">VS</div>
+        <div className="text-center w-1/3"><h2 className="text-3xl font-black mb-2" style={{ color: away.color }}>{away.name}</h2><p className="text-7xl font-bold leading-none">{away.score}</p><p className="text-sm text-gray-500 mt-3 font-semibold uppercase">ฟาวล์รวม: {away.fouls}</p></div>
       </div>
-      <div className="text-center text-xl font-bold mb-8">ผลการแข่งขัน: {home.score > away.score ? `${home.name} ชนะ` : home.score < away.score ? `${away.name} ชนะ` : 'เสมอ'}</div>
-      <div className="flex justify-center gap-4 mt-8 no-print"><button onClick={() => window.print()} className="px-6 py-2 bg-blue-600 text-white rounded shadow hover:bg-blue-700 flex items-center gap-2"><Printer size={20} /> พิมพ์ / บันทึก PDF</button></div>
+      <div className="text-center text-2xl font-bold mb-8 p-4 bg-gray-100 rounded-lg">ผลการแข่งขัน: {home.score > away.score ? `${home.name} ชนะ` : home.score < away.score ? `${away.name} ชนะ` : 'เสมอ'}</div>
+      <div className="flex justify-center gap-4 mt-8 no-print"><button onClick={() => window.print()} className="px-6 py-3 bg-blue-600 text-white font-bold rounded-lg shadow-lg hover:bg-blue-700 transition-colors flex items-center gap-2"><Printer size={20} /> พิมพ์ / บันทึก PDF</button></div>
     </div>
   );
 
@@ -708,87 +807,93 @@ export default function Scoreboard() {
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-200 font-sans flex flex-col">
-      <nav className="bg-gray-900 p-2 border-b border-gray-800 flex justify-between items-center px-4">
-        <div className="flex items-center gap-4">
-          <h1 className="text-xl font-bold text-white flex items-center gap-2"><Monitor size={20}/> SB Control</h1>
-          <div className="flex bg-gray-800 rounded-lg p-1">
-            <button onClick={() => setActiveTab('board')} className={`px-4 py-1 text-sm font-semibold rounded-md ${activeTab === 'board' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>สกอร์บอร์ด</button>
-            <button onClick={() => setActiveTab('roster')} className={`px-4 py-1 text-sm font-semibold rounded-md ${activeTab === 'roster' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>ผู้เล่น</button>
-            <button onClick={() => setActiveTab('settings')} className={`px-4 py-1 text-sm font-semibold rounded-md ${activeTab === 'settings' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>ตั้งค่า</button>
-            <button onClick={() => setActiveTab('summary')} className={`px-4 py-1 text-sm font-semibold rounded-md ${activeTab === 'summary' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>สรุปผล</button>
+      <CustomModal {...modalConfig} onClose={closeModal} />
+      
+      <nav className="bg-gray-900 p-3 border-b border-gray-800 flex flex-wrap gap-4 justify-between items-center shadow-lg">
+        <div className="flex items-center gap-6">
+          <h1 className="text-xl font-black text-white flex items-center gap-2 tracking-wide"><Monitor size={22} className="text-blue-500"/> ARENA COMMAND</h1>
+          <div className="flex bg-gray-800 rounded-lg p-1 shadow-inner">
+            <button onClick={() => setActiveTab('board')} className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${activeTab === 'board' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>สกอร์บอร์ด</button>
+            <button onClick={() => setActiveTab('roster')} className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${activeTab === 'roster' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>ผู้เล่น</button>
+            <button onClick={() => setActiveTab('settings')} className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${activeTab === 'settings' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>ตั้งค่า</button>
+            <button onClick={() => setActiveTab('summary')} className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${activeTab === 'summary' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>สรุปผล</button>
           </div>
         </div>
-        <button onClick={openDisplayWindow} className="flex items-center gap-1 px-3 py-1.5 bg-green-700 hover:bg-green-600 rounded text-sm font-bold text-white shadow"><Maximize size={16} /> เปิดหน้าจอแสดงผล</button>
+        <button onClick={openDisplayWindow} className="flex items-center gap-2 px-4 py-2 bg-green-700 hover:bg-green-600 transition-colors rounded-lg text-sm font-bold text-white shadow-lg"><Maximize size={18} /> เปิดหน้าจอแสดงผล</button>
       </nav>
 
-      <main className="flex-1 overflow-auto p-4 flex flex-col">
+      <main className="flex-1 overflow-auto p-4 md:p-6 flex flex-col">
         {activeTab === 'settings' && renderSettingsPanel()}
         {activeTab === 'roster' && renderRosterPanel()}
         {activeTab === 'summary' && renderSummaryPanel()}
         
+        {}
         {activeTab === 'board' && (
-          <div className="flex flex-col lg:flex-row gap-4 h-full">
-            <div className="w-full lg:w-1/3 flex flex-col gap-4">
-              <div className="h-64 rounded-xl overflow-hidden border border-gray-700 relative bg-black">
-                 <div className="absolute top-1 left-2 text-[10px] text-gray-400 font-mono z-20">PREVIEW</div>
+          <div className="flex flex-col lg:flex-row gap-6 h-full max-w-[1600px] mx-auto w-full">
+            <div className="w-full lg:w-1/3 flex flex-col gap-6">
+              <div className="h-64 rounded-2xl overflow-hidden border-2 border-gray-700 relative bg-black shadow-2xl">
+                 <div className="absolute top-2 left-3 px-2 py-1 bg-black/70 rounded text-[10px] text-gray-300 font-bold tracking-widest z-20 shadow">PREVIEW</div>
                  <div className="transform scale-[0.4] origin-top-left w-[250%] h-[250%] pointer-events-none">
                     {renderScoreboardDisplay(true)}
                  </div>
               </div>
-              <div className="bg-gray-900 rounded-xl p-4 flex-1 border border-gray-800 flex flex-col">
-                <div className="flex justify-between items-center mb-2">
-                  <h3 className="font-bold text-gray-300 text-sm uppercase">ประวัติการทำรายการ</h3>
+              <div className="bg-gray-900 rounded-2xl p-5 flex-1 border border-gray-800 flex flex-col shadow-xl">
+                <div className="flex justify-between items-center mb-3 border-b border-gray-800 pb-2">
+                  <h3 className="font-bold text-gray-300 text-xs tracking-widest uppercase flex items-center gap-2"><FileText size={14}/> ประวัติการทำรายการ</h3>
                   <div className="flex gap-2">
-                    <button onClick={handleUndo} disabled={history.length === 0} className={`p-1 rounded ${history.length > 0 ? 'bg-gray-700 hover:bg-gray-600' : 'opacity-30'}`}><Undo size={16}/></button>
-                    <button onClick={handleRedo} disabled={redoStack.length === 0} className={`p-1 rounded ${redoStack.length > 0 ? 'bg-gray-700 hover:bg-gray-600' : 'opacity-30'}`}><Redo size={16}/></button>
+                    <button onClick={handleUndo} disabled={history.length === 0} className={`p-1.5 rounded-lg transition-colors ${history.length > 0 ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'opacity-30 text-gray-500'}`}><Undo size={16}/></button>
+                    <button onClick={handleRedo} disabled={redoStack.length === 0} className={`p-1.5 rounded-lg transition-colors ${redoStack.length > 0 ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'opacity-30 text-gray-500'}`}><Redo size={16}/></button>
                   </div>
                 </div>
-                <div className="flex-1 overflow-y-auto space-y-1 text-sm text-gray-400 font-mono">
-                  {logs.map(log => <div key={log.id} className="border-b border-gray-800 pb-1"><span className="text-blue-400 mr-2">[{log.time}]</span> {log.msg}</div>)}
+                <div className="flex-1 overflow-y-auto space-y-1.5 text-xs text-gray-400 font-mono pr-2">
+                  {logs.map(log => <div key={log.id} className="border-b border-gray-800/50 pb-1.5 flex"><span className="text-blue-400 mr-3 shrink-0">[{log.time}]</span> <span>{log.msg}</span></div>)}
+                  {logs.length === 0 && <div className="text-center py-4 opacity-50 italic">ยังไม่มีประวัติการทำรายการ</div>}
                 </div>
               </div>
             </div>
 
-            <div className="w-full lg:w-2/3 flex flex-col gap-4">
-              <div className="bg-gray-900 p-4 rounded-xl border border-gray-800 flex flex-wrap gap-4 items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <button onClick={toggleClock} className={`flex items-center gap-2 px-6 py-3 rounded-lg font-bold text-white shadow-lg ${isClockRunning ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-500 animate-pulse'}`}>
+            <div className="w-full lg:w-2/3 flex flex-col gap-6">
+              <div className="bg-gray-900 p-5 rounded-2xl border border-gray-800 flex flex-wrap gap-6 items-center justify-between shadow-xl">
+                <div className="flex items-center gap-3">
+                  <button onClick={toggleClock} className={`flex items-center gap-2 px-6 py-4 rounded-xl font-bold text-white shadow-lg transition-all ${isClockRunning ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-500 shadow-[0_0_15px_rgba(22,163,74,0.4)]'}`}>
                     {isClockRunning ? <><Square size={20}/> หยุดเวลา (Space)</> : <><Play size={20}/> เริ่มเวลา (Space)</>}
                   </button>
-                  <div className="flex flex-col gap-1 ml-2"><button onClick={() => setClockMs(m => m + 60000)} className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs">+1 นาที</button><button onClick={() => setClockMs(m => m + 1000)} className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs">+1 วิ</button></div>
-                  <div className="flex flex-col gap-1"><button onClick={() => setClockMs(m => Math.max(0, m - 60000))} className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs">-1 นาที</button><button onClick={() => setClockMs(m => Math.max(0, m - 1000))} className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs">-1 วิ</button></div>
-                  <button onClick={resetClock} className="p-3 bg-gray-700 hover:bg-gray-600 rounded-lg ml-2"><RotateCcw size={20}/></button>
+                  <div className="flex flex-col gap-1 ml-2"><button onClick={() => setClockMs(m => m + 60000)} className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs font-semibold">+1 นาที</button><button onClick={() => setClockMs(m => m + 1000)} className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs font-semibold">+1 วิ</button></div>
+                  <div className="flex flex-col gap-1"><button onClick={() => setClockMs(m => Math.max(0, m - 60000))} className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs font-semibold">-1 นาที</button><button onClick={() => setClockMs(m => Math.max(0, m - 1000))} className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs font-semibold">-1 วิ</button></div>
+                  <button onClick={resetClock} className="p-3 bg-gray-700 hover:bg-gray-600 rounded-xl ml-2 text-gray-300 transition-colors" title="รีเซ็ตเวลา"><RotateCcw size={20}/></button>
                 </div>
-                <div className="flex items-center gap-2 bg-gray-800 p-2 rounded-lg">
-                  <span className="text-xs font-bold text-gray-400 w-16">SHOT<br/>CLOCK</span>
-                  <button onClick={toggleShotClock} className={`p-2 rounded ${isShotClockRunning ? 'bg-red-800' : 'bg-green-800'}`}>{isShotClockRunning ? <Square size={16}/> : <Play size={16}/>}</button>
-                  <button onClick={() => resetShotClock(settings.shotClockSeconds)} className="px-3 py-2 bg-blue-900 hover:bg-blue-800 font-mono font-bold rounded text-sm">{settings.shotClockSeconds}</button>
-                  <button onClick={() => resetShotClock(settings.shortShotClockSeconds)} className="px-3 py-2 bg-blue-900 hover:bg-blue-800 font-mono font-bold rounded text-sm">{settings.shortShotClockSeconds}</button>
-                  <button onClick={() => setShotClockMs(m => m + 1000)} className="px-2 py-2 bg-gray-700 rounded text-xs">+1</button>
-                  <button onClick={() => setShotClockMs(m => Math.max(0, m - 1000))} className="px-2 py-2 bg-gray-700 rounded text-xs">-1</button>
+                <div className="flex items-center gap-3 bg-gray-950 p-3 rounded-xl border border-gray-800 shadow-inner">
+                  <span className="text-[10px] font-black text-gray-500 w-12 tracking-widest leading-tight">SHOT<br/>CLOCK</span>
+                  <button onClick={toggleShotClock} className={`p-3 rounded-lg shadow transition-colors ${isShotClockRunning ? 'bg-red-800 hover:bg-red-700 text-white' : 'bg-green-800 hover:bg-green-700 text-white'}`}>{isShotClockRunning ? <Square size={18}/> : <Play size={18}/>}</button>
+                  <button onClick={() => resetShotClock(settings.shotClockSeconds)} className="px-4 py-2.5 bg-blue-900 hover:bg-blue-800 text-blue-100 font-mono font-bold rounded-lg text-sm transition-colors">{settings.shotClockSeconds}</button>
+                  <button onClick={() => resetShotClock(settings.shortShotClockSeconds)} className="px-4 py-2.5 bg-blue-900 hover:bg-blue-800 text-blue-100 font-mono font-bold rounded-lg text-sm transition-colors">{settings.shortShotClockSeconds}</button>
+                  <div className="flex flex-col gap-1 ml-1">
+                    <button onClick={() => setShotClockMs(m => m + 1000)} className="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-[10px] font-semibold text-gray-400">+1</button>
+                    <button onClick={() => setShotClockMs(m => Math.max(0, m - 1000))} className="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-[10px] font-semibold text-gray-400">-1</button>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex gap-4">
-                 <div className="bg-gray-900 p-3 rounded-xl border border-gray-800 flex flex-1 items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-bold text-gray-400">ควอเตอร์:</span>
-                      <span className="text-2xl font-bold text-white w-12 text-center">{quarter}</span>
-                      <button onClick={nextQuarter} className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm flex items-center gap-1">ถัดไป <ArrowRight size={14}/></button>
+              <div className="flex gap-6">
+                 <div className="bg-gray-900 p-4 rounded-2xl border border-gray-800 flex flex-wrap gap-4 flex-1 items-center justify-between shadow-xl">
+                    <div className="flex items-center gap-3 bg-gray-950 p-2 rounded-xl border border-gray-800">
+                      <span className="text-xs font-bold text-gray-500 uppercase px-2">ควอเตอร์</span>
+                      <span className="text-3xl font-black text-white w-14 text-center">{quarter}</span>
+                      <button onClick={nextQuarter} className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs font-bold flex items-center gap-2 transition-colors">ถัดไป <ArrowRight size={14}/></button>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-bold text-gray-400">ครองบอล:</span>
-                      <button onClick={() => setPossession('home')} className={`px-4 py-1 rounded font-bold transition ${possession === 'home' ? 'bg-yellow-500 text-black' : 'bg-gray-800'}`}>เหย้า ◀</button>
-                      <button onClick={() => setPossession('away')} className={`px-4 py-1 rounded font-bold transition ${possession === 'away' ? 'bg-yellow-500 text-black' : 'bg-gray-800'}`}>▶ เยือน</button>
+                    <div className="flex items-center gap-3 bg-gray-950 p-2 rounded-xl border border-gray-800">
+                      <span className="text-xs font-bold text-gray-500 uppercase px-2">ครองบอล</span>
+                      <button onClick={() => setPossession('home')} className={`px-5 py-2 rounded-lg font-black transition-all ${possession === 'home' ? 'bg-yellow-500 text-black shadow-[0_0_10px_rgba(234,179,8,0.5)]' : 'bg-gray-800 text-gray-400'}`}>เหย้า ◀</button>
+                      <button onClick={() => setPossession('away')} className={`px-5 py-2 rounded-lg font-black transition-all ${possession === 'away' ? 'bg-yellow-500 text-black shadow-[0_0_10px_rgba(234,179,8,0.5)]' : 'bg-gray-800 text-gray-400'}`}>▶ เยือน</button>
                     </div>
-                    <div className="flex gap-2">
-                       <button onClick={() => playHorn('quarter', settings.soundVolume/100)} className="p-2 bg-orange-700 hover:bg-orange-600 rounded-lg flex items-center gap-1 text-sm font-bold shadow-lg"><Volume2 size={18}/> แตรยาว (H)</button>
-                       {activeTimeout && <button onClick={stopTimeout} className="p-2 bg-red-700 hover:bg-red-600 rounded-lg text-sm font-bold shadow-lg">จบเวลานอก</button>}
+                    <div className="flex gap-3">
+                       <button onClick={() => playHorn('quarter', settings.soundVolume/100)} className="px-4 py-3 bg-orange-700 hover:bg-orange-600 rounded-xl flex items-center gap-2 text-sm font-bold shadow-lg transition-colors"><Volume2 size={20}/> แตรยาว (H)</button>
+                       {activeTimeout && <button onClick={stopTimeout} className="px-4 py-3 bg-red-700 hover:bg-red-600 rounded-xl text-sm font-bold shadow-lg transition-colors flex items-center gap-2"><Clock size={20}/> จบเวลานอก</button>}
                     </div>
                  </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 flex-1">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 flex-1">
                 {renderTeamControls("home")}
                 {renderTeamControls("away")}
               </div>
