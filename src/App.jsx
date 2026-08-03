@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Square, RotateCcw, Plus, Volume2, Maximize, Monitor, Settings, Users, Printer, ArrowRight, Clock, Trash2, Undo, Redo, FileText } from 'lucide-react';
+import { Play, Square, RotateCcw, Plus, Volume2, Maximize, Monitor, Settings, Users, Printer, ArrowLeft, ArrowRight, Clock, Trash2, Undo, Redo, FileText } from 'lucide-react';
 const SOUND_PATHS = {
     quarter: '/sounds/quarter-horn.mp3',
     shotclock: '/sounds/shot-clock.mp3',
@@ -124,6 +124,7 @@ const DEFAULT_SETTINGS = {
     playerFoulOutLimit: 5,
     timeoutsPerTeam: 3,
     timeoutDuration: 60,
+    quarterBreakDuration: 120,
     soundEnabled: true,
     soundVolume: 50,
 };
@@ -233,10 +234,13 @@ export default function Scoreboard() {
     const [isShotClockRunning, setIsShotClockRunning] = useState(false);
     const [timeoutMs, setTimeoutMs] = useState(0);
     const [activeTimeout, setActiveTimeout] = useState(null);
+    const [quarterBreakMs, setQuarterBreakMs] = useState(0);
+    const [isQuarterBreakRunning, setIsQuarterBreakRunning] = useState(false);
     const [logs, setLogs] = useState([]);
     const [history, setHistory] = useState([]);
     const [redoStack, setRedoStack] = useState([]);
     const [activeTab, setActiveTab] = useState('board');
+    const [displayView, setDisplayView] = useState('scoreboard');
     const [blinkHome, setBlinkHome] = useState(false);
     const [blinkAway, setBlinkAway] = useState(false);
     // Modal State mapping
@@ -254,12 +258,15 @@ export default function Scoreboard() {
     const isShotClockRunningRef = useRef(isShotClockRunning);
     const timeoutMsRef = useRef(timeoutMs);
     const activeTimeoutRef = useRef(activeTimeout);
+    const quarterBreakMsRef = useRef(quarterBreakMs);
+    const isQuarterBreakRunningRef = useRef(isQuarterBreakRunning);
     const logsRef = useRef(logs);
     const historyRef = useRef(history);
     const redoStackRef = useRef(redoStack);
     const gameClockEndRef = useRef(null);
     const shotClockEndRef = useRef(null);
     const timeoutEndRef = useRef(null);
+    const quarterBreakEndRef = useRef(null);
     const timeoutWarningPlayedRef = useRef(false);
     const lastUiUpdateRef = useRef(0);
     const logSequenceRef = useRef(Date.now());
@@ -275,14 +282,16 @@ export default function Scoreboard() {
         isShotClockRunningRef.current = isShotClockRunning;
         timeoutMsRef.current = timeoutMs;
         activeTimeoutRef.current = activeTimeout;
+        quarterBreakMsRef.current = quarterBreakMs;
+        isQuarterBreakRunningRef.current = isQuarterBreakRunning;
         logsRef.current = logs;
         historyRef.current = history;
         redoStackRef.current = redoStack;
         stateRef.current = {
             settings, home, away, quarter, possession, clockMs, isClockRunning,
-            shotClockMs, isShotClockRunning, timeoutMs, activeTimeout, blinkHome, blinkAway
+            shotClockMs, isShotClockRunning, timeoutMs, activeTimeout, quarterBreakMs, isQuarterBreakRunning, blinkHome, blinkAway, displayView
         };
-    }, [settings, home, away, quarter, possession, clockMs, isClockRunning, shotClockMs, isShotClockRunning, timeoutMs, activeTimeout, blinkHome, blinkAway, logs, history, redoStack]);
+    }, [settings, home, away, quarter, possession, clockMs, isClockRunning, shotClockMs, isShotClockRunning, timeoutMs, activeTimeout, quarterBreakMs, isQuarterBreakRunning, blinkHome, blinkAway, displayView, logs, history, redoStack]);
     useEffect(() => {
         const applyDisplayState = (state) => {
             const nextSettings = normalizeSettings(state.settings);
@@ -299,8 +308,11 @@ export default function Scoreboard() {
             setIsShotClockRunning(Boolean(state.isShotClockRunning));
             setTimeoutMs(typeof state.timeoutMs === 'number' ? Math.max(0, state.timeoutMs) : 0);
             setActiveTimeout(state.activeTimeout === 'home' || state.activeTimeout === 'away' ? state.activeTimeout : null);
+            setQuarterBreakMs(typeof state.quarterBreakMs === 'number' ? Math.max(0, state.quarterBreakMs) : 0);
+            setIsQuarterBreakRunning(Boolean(state.isQuarterBreakRunning));
             setBlinkHome(Boolean(state.blinkHome));
             setBlinkAway(Boolean(state.blinkAway));
+            setDisplayView(state.displayView === 'stats' ? 'stats' : 'scoreboard');
         };
         let saved = null;
         try {
@@ -324,7 +336,9 @@ export default function Scoreboard() {
                     const restoredClock = typeof parsed.clockMs === 'number' ? Math.max(0, parsed.clockMs) : nextSettings.quarterMinutes * 60000;
                     const restoredShotClock = typeof parsed.shotClockMs === 'number' ? Math.max(0, parsed.shotClockMs) : nextSettings.shotClockSeconds * 1000;
                     const restoredTimeout = typeof parsed.timeoutMs === 'number' ? Math.max(0, parsed.timeoutMs) : 0;
+                    const restoredQuarterBreak = typeof parsed.quarterBreakMs === 'number' ? Math.max(0, parsed.quarterBreakMs) : 0;
                     const restoredLogs = Array.isArray(parsed.logs) ? parsed.logs : [];
+                    const restoredDisplayView = parsed.displayView === 'stats' ? 'stats' : 'scoreboard';
                     settingsRef.current = nextSettings;
                     homeRef.current = nextHome;
                     awayRef.current = nextAway;
@@ -333,6 +347,8 @@ export default function Scoreboard() {
                     clockMsRef.current = restoredClock;
                     shotClockMsRef.current = restoredShotClock;
                     timeoutMsRef.current = restoredTimeout;
+                    quarterBreakMsRef.current = restoredQuarterBreak;
+                    isQuarterBreakRunningRef.current = false;
                     logsRef.current = restoredLogs;
                     isClockRunningRef.current = false;
                     isShotClockRunningRef.current = false;
@@ -349,8 +365,11 @@ export default function Scoreboard() {
                         isShotClockRunning: false,
                         timeoutMs: restoredTimeout,
                         activeTimeout: null,
+                        quarterBreakMs: restoredQuarterBreak,
+                        isQuarterBreakRunning: false,
                         blinkHome: false,
                         blinkAway: false,
+                        displayView: restoredDisplayView,
                     };
                     setSettings(nextSettings);
                     setHome(nextHome);
@@ -360,11 +379,15 @@ export default function Scoreboard() {
                     setClockMs(restoredClock);
                     setShotClockMs(restoredShotClock);
                     setTimeoutMs(restoredTimeout);
+                    setQuarterBreakMs(restoredQuarterBreak);
+                    setIsQuarterBreakRunning(false);
                     setLogs(restoredLogs);
+                    setDisplayView(restoredDisplayView);
                     // หลังรีเฟรชให้เวลาหยุดไว้เสมอ เพื่อไม่ให้เวลาข้ามโดยไม่ตั้งใจ
                     setIsClockRunning(false);
                     setIsShotClockRunning(false);
                     setActiveTimeout(null);
+                    setIsQuarterBreakRunning(false);
                 }
             }
             catch (error) {
@@ -553,9 +576,25 @@ export default function Scoreboard() {
                     }
                 }
             }
+            if (isQuarterBreakRunningRef.current && quarterBreakEndRef.current !== null) {
+                const remaining = Math.max(0, quarterBreakEndRef.current - now);
+                if (remaining <= 0) {
+                    quarterBreakMsRef.current = 0;
+                    isQuarterBreakRunningRef.current = false;
+                    quarterBreakEndRef.current = null;
+                    setQuarterBreakMs(0);
+                    setIsQuarterBreakRunning(false);
+                    if (settingsRef.current.soundEnabled)
+                        void playHorn('timeout', settingsRef.current.soundVolume / 100);
+                }
+                else if (shouldRefreshUi) {
+                    quarterBreakMsRef.current = remaining;
+                    setQuarterBreakMs(remaining);
+                }
+            }
             if (shouldRefreshUi)
                 lastUiUpdateRef.current = now;
-            if (isClockRunningRef.current || isShotClockRunningRef.current || activeTimeoutRef.current) {
+            if (isClockRunningRef.current || isShotClockRunningRef.current || activeTimeoutRef.current || isQuarterBreakRunningRef.current) {
                 animationFrameId = requestAnimationFrame(tick);
             }
         };
@@ -566,12 +605,14 @@ export default function Scoreboard() {
             shotClockEndRef.current = now + shotClockMsRef.current;
         if (activeTimeoutRef.current && timeoutEndRef.current === null)
             timeoutEndRef.current = now + timeoutMsRef.current;
-        if (isClockRunningRef.current || isShotClockRunningRef.current || activeTimeoutRef.current) {
+        if (isQuarterBreakRunningRef.current && quarterBreakEndRef.current === null)
+            quarterBreakEndRef.current = now + quarterBreakMsRef.current;
+        if (isClockRunningRef.current || isShotClockRunningRef.current || activeTimeoutRef.current || isQuarterBreakRunningRef.current) {
             lastUiUpdateRef.current = now;
             animationFrameId = requestAnimationFrame(tick);
         }
         return () => cancelAnimationFrame(animationFrameId);
-    }, [isClockRunning, isShotClockRunning, activeTimeout, isDisplayMode]);
+    }, [isClockRunning, isShotClockRunning, activeTimeout, isQuarterBreakRunning, isDisplayMode]);
     const showConfirm = (title, message, onConfirm) => setModalConfig({ isOpen: true, type: 'confirm', title, message, onConfirm });
     const showAlert = (title, message) => setModalConfig({ isOpen: true, type: 'alert', title, message, onConfirm: null });
     const showPrompt = (title, message, defaultValue, onConfirm) => setModalConfig({ isOpen: true, type: 'prompt', title, message, defaultValue, onConfirm });
@@ -605,7 +646,7 @@ export default function Scoreboard() {
         setIsShotClockRunning(false);
     };
     const toggleClock = () => {
-        if (activeTimeoutRef.current)
+        if (activeTimeoutRef.current || isQuarterBreakRunningRef.current)
             return;
         const now = performance.now();
         if (isClockRunningRef.current) {
@@ -640,6 +681,8 @@ export default function Scoreboard() {
         });
     };
     const toggleShotClock = () => {
+        if (isQuarterBreakRunningRef.current)
+            return;
         const now = performance.now();
         if (isShotClockRunningRef.current) {
             const remaining = shotClockEndRef.current === null ? shotClockMsRef.current : Math.max(0, shotClockEndRef.current - now);
@@ -657,6 +700,8 @@ export default function Scoreboard() {
         setIsShotClockRunning(true);
     };
     const resetShotClock = (seconds) => {
+        if (isQuarterBreakRunningRef.current)
+            return;
         const next = Math.max(0, seconds * 1000);
         shotClockMsRef.current = next;
         setShotClockMs(next);
@@ -766,6 +811,8 @@ export default function Scoreboard() {
             : `${current.name} ฟาวล์ ${amount > 0 ? '+1' : '-1'}`);
     };
     const startTimeout = (team) => {
+        if (isQuarterBreakRunningRef.current)
+            stopQuarterBreak();
         const current = team === 'home' ? homeRef.current : awayRef.current;
         if (current.timeouts <= 0) {
             showAlert('แจ้งเตือน', 'จำนวนเวลานอกสำหรับทีมนี้หมดแล้ว');
@@ -794,6 +841,25 @@ export default function Scoreboard() {
         setActiveTimeout(null);
         setTimeoutMs(0);
     };
+    const startQuarterBreak = () => {
+        if (activeTimeoutRef.current)
+            stopTimeout();
+        stopGameAndShotClocks();
+        const duration = Math.max(1, settingsRef.current.quarterBreakDuration) * 1000;
+        quarterBreakMsRef.current = duration;
+        isQuarterBreakRunningRef.current = true;
+        quarterBreakEndRef.current = performance.now() + duration;
+        setQuarterBreakMs(duration);
+        setIsQuarterBreakRunning(true);
+        addLog(`เริ่มพักระหว่างควอเตอร์ ${Math.max(1, settingsRef.current.quarterBreakDuration)} วินาที`);
+    };
+    const stopQuarterBreak = () => {
+        quarterBreakMsRef.current = 0;
+        isQuarterBreakRunningRef.current = false;
+        quarterBreakEndRef.current = null;
+        setQuarterBreakMs(0);
+        setIsQuarterBreakRunning(false);
+    };
     const adjustTimeouts = (team, amount) => {
         const current = team === 'home' ? homeRef.current : awayRef.current;
         const maximum = Math.max(0, settingsRef.current.timeoutsPerTeam);
@@ -820,10 +886,49 @@ export default function Scoreboard() {
         const overtimeMatch = current.match(/^OT(\d+)$/);
         return overtimeMatch ? `OT${Number(overtimeMatch[1]) + 1}` : 'Q1';
     };
+    const getPreviousQuarter = (current) => {
+        const regulation = ['Q1', 'Q2', 'Q3', 'Q4'];
+        const regulationIndex = regulation.indexOf(current);
+        if (regulationIndex > 0)
+            return regulation[regulationIndex - 1];
+        if (current === 'OT' || current === 'OT1')
+            return 'Q4';
+        const overtimeMatch = current.match(/^OT(\d+)$/);
+        if (overtimeMatch) {
+            const overtimeNumber = Number(overtimeMatch[1]);
+            return overtimeNumber <= 2 ? 'OT' : `OT${overtimeNumber - 1}`;
+        }
+        return null;
+    };
+    const previousQuarter = () => {
+        const previous = getPreviousQuarter(quarterRef.current);
+        if (!previous)
+            return;
+        showConfirm('ยืนยัน', `ยืนยันการย้อนกลับไป ${previous}? (ระบบจะรีเซ็ตเวลา ฟาวล์ทีม และเวลานอก)`, () => {
+            if (activeTimeoutRef.current)
+                stopTimeout();
+            if (isQuarterBreakRunningRef.current)
+                stopQuarterBreak();
+            stopGameAndShotClocks();
+            quarterRef.current = previous;
+            setQuarter(previous);
+            setHomeState({ ...homeRef.current, fouls: 0, timeouts: settingsRef.current.timeoutsPerTeam });
+            setAwayState({ ...awayRef.current, fouls: 0, timeouts: settingsRef.current.timeoutsPerTeam });
+            const nextClock = (previous.startsWith('OT') ? settingsRef.current.overtimeMinutes : settingsRef.current.quarterMinutes) * 60000;
+            const nextShotClock = settingsRef.current.shotClockSeconds * 1000;
+            clockMsRef.current = nextClock;
+            shotClockMsRef.current = nextShotClock;
+            setClockMs(nextClock);
+            setShotClockMs(nextShotClock);
+            addLog(`ย้อนกลับไป ${previous}`);
+        });
+    };
     const nextQuarter = () => {
         showConfirm('ยืนยัน', 'ยืนยันการเปลี่ยนควอเตอร์? (ระบบจะรีเซ็ตเวลา ฟาวล์ทีม และเวลานอก)', () => {
             if (activeTimeoutRef.current)
                 stopTimeout();
+            if (isQuarterBreakRunningRef.current)
+                stopQuarterBreak();
             stopGameAndShotClocks();
             const next = getNextQuarter(quarterRef.current);
             quarterRef.current = next;
@@ -958,7 +1063,10 @@ export default function Scoreboard() {
 
           {/* CENTER - CLOCKS */}
           <div className="flex-[1.5] flex flex-col items-center justify-center bg-gray-900 p-2 md:p-6 rounded-3xl border-2 border-gray-700 shadow-2xl z-10 relative overflow-hidden">
-            {activeTimeout ? (<div className="flex flex-col items-center mb-4 w-full bg-yellow-600 rounded-lg p-4 animate-pulse">
+            {isQuarterBreakRunning ? (<div className="flex flex-col items-center mb-4 w-full bg-blue-600 rounded-lg p-4 animate-pulse">
+                <span className="text-2xl md:text-5xl font-bold uppercase text-white">QUARTER BREAK</span>
+                <div className="text-7xl md:text-9xl font-mono font-bold text-white tracking-tighter">{formatTime(quarterBreakMs)}</div>
+              </div>) : activeTimeout ? (<div className="flex flex-col items-center mb-4 w-full bg-yellow-600 rounded-lg p-4 animate-pulse">
                 <span className="text-2xl md:text-5xl font-bold uppercase text-black">TIMEOUT - {activeTimeout === 'home' ? home.name : away.name}</span>
                 <div className="text-7xl md:text-9xl font-mono font-bold text-black tracking-tighter">{formatTime(timeoutMs)}</div>
               </div>) : null}
@@ -1098,6 +1206,10 @@ export default function Scoreboard() {
             <div>
               <label className="block text-sm mb-1 text-gray-400">Shot Clock (วินาที)</label>
               <input type="number" value={settings.shotClockSeconds} onChange={(e) => setSettings({ ...settings, shotClockSeconds: parseInt(e.target.value) || 24 })} className="w-full bg-gray-900 p-2 rounded border border-gray-700"/>
+            </div>
+            <div>
+              <label className="block text-sm mb-1 text-gray-400">พักระหว่างควอเตอร์ (วินาที)</label>
+              <input type="number" min="1" value={settings.quarterBreakDuration} onChange={(e) => setSettings({ ...settings, quarterBreakDuration: Math.max(1, parseInt(e.target.value) || 120) })} className="w-full bg-gray-900 p-2 rounded border border-gray-700"/>
             </div>
             <div>
               <label className="block text-sm mb-1 text-gray-400">จำนวนเวลานอกต่อทีม</label>
@@ -1247,6 +1359,68 @@ export default function Scoreboard() {
         };
         return <div className="flex flex-col md:flex-row gap-6 max-w-6xl mx-auto w-full">{r(home, 'home')}{r(away, 'away')}</div>;
     };
+    const renderPlayerStatsDisplay = () => {
+        const renderTeamStats = (team) => {
+            const sortedPlayers = [...team.players].sort((a, b) => b.points - a.points || a.fouls - b.fouls || String(a.number).localeCompare(String(b.number), undefined, { numeric: true }));
+            const recordedPoints = team.players.reduce((sum, player) => sum + player.points, 0);
+            const recordedFouls = team.players.reduce((sum, player) => sum + player.fouls, 0);
+            const topScorer = sortedPlayers[0] || null;
+            return (<div className="flex-1 min-w-0 flex flex-col bg-gray-950 rounded-2xl border-2 shadow-2xl overflow-hidden" style={{ borderColor: team.color }}>
+              <div className="px-4 py-3 border-b border-gray-800 bg-gray-900">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <h2 className="text-3xl md:text-5xl font-black uppercase truncate" style={{ color: team.color }}>{team.name}</h2>
+                    <p className="text-gray-400 text-sm md:text-lg font-semibold">ผู้เล่น {team.players.length} คน • บันทึกคะแนน {recordedPoints} • ฟาวล์ {recordedFouls}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="text-xs md:text-base text-gray-500 font-bold uppercase">TEAM SCORE</div>
+                    <div className="text-5xl md:text-7xl font-mono font-black text-white leading-none">{team.score}</div>
+                  </div>
+                </div>
+                <div className="mt-2 text-sm md:text-lg text-yellow-400 font-bold truncate">
+                  {topScorer ? `ผู้ทำคะแนนสูงสุด: #${topScorer.number} ${topScorer.name} — ${topScorer.points} คะแนน` : 'ยังไม่มีข้อมูลผู้เล่น'}
+                </div>
+              </div>
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <table className="w-full table-fixed text-left text-gray-200">
+                  <thead className="bg-black text-gray-400 uppercase">
+                    <tr>
+                      <th className="px-3 py-2 w-14 md:w-20 text-center">#</th>
+                      <th className="px-3 py-2">ชื่อผู้เล่น</th>
+                      <th className="px-3 py-2 w-16 md:w-24 text-center">PTS</th>
+                      <th className="px-3 py-2 w-16 md:w-24 text-center">FLS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedPlayers.map((player, index) => (<tr key={player.id} className={`border-t border-gray-800 ${index === 0 && player.points > 0 ? 'bg-yellow-500/10' : ''}`}>
+                      <td className="px-3 py-2 text-center font-mono font-black text-lg md:text-2xl">{player.number}</td>
+                      <td className="px-3 py-2 truncate font-bold text-base md:text-2xl">{player.name}{player.fouls >= settings.playerFoulOutLimit && <span className="ml-2 text-xs md:text-sm bg-red-600 text-white px-2 py-0.5 rounded">FOUL OUT</span>}</td>
+                      <td className="px-3 py-2 text-center font-mono font-black text-green-400 text-xl md:text-3xl">{player.points}</td>
+                      <td className="px-3 py-2 text-center font-mono font-black text-red-400 text-xl md:text-3xl">{player.fouls}</td>
+                    </tr>))}
+                  </tbody>
+                </table>
+                {team.players.length === 0 && <div className="h-full flex items-center justify-center text-gray-500 text-xl md:text-3xl font-bold">ยังไม่มีรายชื่อผู้เล่น</div>}
+              </div>
+            </div>);
+        };
+        return (<div className="flex flex-col w-full h-full bg-black text-white font-sans select-none border-4 border-gray-800 overflow-hidden" style={{ fontFamily: "'Inter', sans-serif" }}>
+          <div className="flex items-center justify-between gap-4 px-4 md:px-6 py-2 md:py-3 bg-gray-900 border-b border-gray-700">
+            <div className="min-w-0">
+              <h1 className="text-2xl md:text-5xl font-black tracking-wide uppercase text-gray-200 truncate">สถิติผู้เล่น</h1>
+              <p className="text-gray-400 text-sm md:text-xl font-semibold truncate">{settings.gameName}</p>
+            </div>
+            <div className="flex items-center gap-5 md:gap-8 shrink-0">
+              <div className="text-center"><div className="text-xs md:text-base text-gray-500 font-bold">ควอเตอร์</div><div className="text-2xl md:text-4xl font-black">{quarter}</div></div>
+              <div className="text-center"><div className="text-xs md:text-base text-gray-500 font-bold">{isQuarterBreakRunning ? 'พักควอเตอร์' : 'เวลา'}</div><div className={`text-3xl md:text-5xl font-mono font-black ${isQuarterBreakRunning ? 'text-blue-400' : 'text-yellow-400'}`}>{formatTime(isQuarterBreakRunning ? quarterBreakMs : clockMs)}</div></div>
+            </div>
+          </div>
+          <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-5 p-3 md:p-5">
+            {renderTeamStats(home)}
+            {renderTeamStats(away)}
+          </div>
+        </div>);
+    };
     const renderSummaryPanel = () => (<div className="bg-white text-black p-8 rounded-xl max-w-4xl mx-auto shadow-2xl printable-area w-full">
       <style>{`@media print { body * { visibility: hidden; } .printable-area, .printable-area * { visibility: visible; } .printable-area { position: absolute; left: 0; top: 0; width: 100%; } .no-print { display: none; } }`}</style>
       <div className="text-center border-b-2 border-gray-300 pb-4 mb-6">
@@ -1262,7 +1436,7 @@ export default function Scoreboard() {
       <div className="flex justify-center gap-4 mt-8 no-print"><button onClick={() => window.print()} className="px-6 py-3 bg-blue-600 text-white font-bold rounded-lg shadow-lg hover:bg-blue-700 transition-colors flex items-center gap-2"><Printer size={20}/> พิมพ์ / บันทึก PDF</button></div>
     </div>);
     if (isDisplayMode) {
-        return <div className="w-screen h-screen bg-black overflow-hidden flex items-center justify-center">{renderScoreboardDisplay()}</div>;
+        return <div className="w-screen h-screen bg-black overflow-hidden flex items-center justify-center">{displayView === 'stats' ? renderPlayerStatsDisplay() : renderScoreboardDisplay()}</div>;
     }
     return (<div className="min-h-screen bg-gray-950 text-gray-200 font-sans flex flex-col">
       <CustomModal {...modalConfig} onClose={closeModal}/>
@@ -1277,7 +1451,10 @@ export default function Scoreboard() {
             <button onClick={() => setActiveTab('summary')} className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${activeTab === 'summary' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>สรุปผล</button>
           </div>
         </div>
-        <button onClick={openDisplayWindow} className="flex items-center gap-2 px-4 py-2 bg-green-700 hover:bg-green-600 transition-colors rounded-lg text-sm font-bold text-white shadow-lg"><Maximize size={18}/> เปิดหน้าจอแสดงผล</button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setDisplayView(current => current === 'scoreboard' ? 'stats' : 'scoreboard')} className={`flex items-center gap-2 px-4 py-2 transition-colors rounded-lg text-sm font-bold text-white shadow-lg ${displayView === 'stats' ? 'bg-blue-700 hover:bg-blue-600' : 'bg-purple-700 hover:bg-purple-600'}`}><Users size={18}/> {displayView === 'stats' ? 'กลับไปหน้าสกอร์' : 'แสดงสถิติบนจอ'}</button>
+          <button onClick={openDisplayWindow} className="flex items-center gap-2 px-4 py-2 bg-green-700 hover:bg-green-600 transition-colors rounded-lg text-sm font-bold text-white shadow-lg"><Maximize size={18}/> เปิดหน้าจอแสดงผล</button>
+        </div>
       </nav>
 
       <main className="flex-1 overflow-auto p-4 md:p-6 flex flex-col">
@@ -1335,6 +1512,7 @@ export default function Scoreboard() {
                  <div className="bg-gray-900 p-4 rounded-2xl border border-gray-800 flex flex-wrap gap-4 flex-1 items-center justify-between shadow-xl">
                     <div className="flex items-center gap-3 bg-gray-950 p-2 rounded-xl border border-gray-800">
                       <span className="text-xs font-bold text-gray-500 uppercase px-2">ควอเตอร์</span>
+                      <button onClick={previousQuarter} disabled={!getPreviousQuarter(quarter)} className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${getPreviousQuarter(quarter) ? 'bg-gray-800 hover:bg-gray-700 text-white' : 'bg-gray-900 text-gray-700 cursor-not-allowed'}`}><ArrowLeft size={14}/> ก่อนหน้า</button>
                       <span className="text-3xl font-black text-white w-14 text-center">{quarter}</span>
                       <button onClick={nextQuarter} className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs font-bold flex items-center gap-2 transition-colors">ถัดไป <ArrowRight size={14}/></button>
                     </div>
@@ -1345,6 +1523,7 @@ export default function Scoreboard() {
                     </div>
                     <div className="flex gap-3">
                        <button onClick={() => settings.soundEnabled && void playHorn('quarter', settings.soundVolume / 100)} className="px-4 py-3 bg-orange-700 hover:bg-orange-600 rounded-xl flex items-center gap-2 text-sm font-bold shadow-lg transition-colors"><Volume2 size={20}/> แตรยาว (H)</button>
+                       <button onClick={isQuarterBreakRunning ? stopQuarterBreak : startQuarterBreak} className={`px-4 py-3 rounded-xl text-sm font-bold shadow-lg transition-colors flex items-center gap-2 ${isQuarterBreakRunning ? 'bg-red-700 hover:bg-red-600' : 'bg-blue-700 hover:bg-blue-600'}`}><Clock size={20}/> {isQuarterBreakRunning ? 'จบพักควอเตอร์' : 'พักระหว่างควอเตอร์'}</button>
                        {activeTimeout && <button onClick={stopTimeout} className="px-4 py-3 bg-red-700 hover:bg-red-600 rounded-xl text-sm font-bold shadow-lg transition-colors flex items-center gap-2"><Clock size={20}/> จบเวลานอก</button>}
                     </div>
                  </div>
