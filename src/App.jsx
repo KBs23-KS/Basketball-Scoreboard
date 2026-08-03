@@ -787,6 +787,20 @@ export default function Scoreboard() {
         setActiveTimeout(null);
         setTimeoutMs(0);
     };
+    const adjustTimeouts = (team, amount) => {
+        const current = team === 'home' ? homeRef.current : awayRef.current;
+        const maximum = Math.max(0, settingsRef.current.timeoutsPerTeam);
+        const nextTimeouts = Math.min(maximum, Math.max(0, current.timeouts + amount));
+        if (nextTimeouts === current.timeouts)
+            return;
+        saveHistorySnapshot();
+        const updated = { ...current, timeouts: nextTimeouts };
+        if (team === 'home')
+            setHomeState(updated);
+        else
+            setAwayState(updated);
+        addLog(`${current.name} ${amount > 0 ? 'เพิ่ม' : 'ลด'}เวลานอก เหลือ ${nextTimeouts}`);
+    };
     const getNextQuarter = (current) => {
         const regulation = ['Q1', 'Q2', 'Q3', 'Q4'];
         const regulationIndex = regulation.indexOf(current);
@@ -800,15 +814,15 @@ export default function Scoreboard() {
         return overtimeMatch ? `OT${Number(overtimeMatch[1]) + 1}` : 'Q1';
     };
     const nextQuarter = () => {
-        showConfirm('ยืนยัน', 'ยืนยันการเปลี่ยนควอเตอร์? (ระบบจะรีเซ็ตเวลาและฟาวล์ทีม)', () => {
+        showConfirm('ยืนยัน', 'ยืนยันการเปลี่ยนควอเตอร์? (ระบบจะรีเซ็ตเวลา ฟาวล์ทีม และเวลานอก)', () => {
             if (activeTimeoutRef.current)
                 stopTimeout();
             stopGameAndShotClocks();
             const next = getNextQuarter(quarterRef.current);
             quarterRef.current = next;
             setQuarter(next);
-            setHomeState({ ...homeRef.current, fouls: 0 });
-            setAwayState({ ...awayRef.current, fouls: 0 });
+            setHomeState({ ...homeRef.current, fouls: 0, timeouts: settingsRef.current.timeoutsPerTeam });
+            setAwayState({ ...awayRef.current, fouls: 0, timeouts: settingsRef.current.timeoutsPerTeam });
             const nextClock = (next.startsWith('OT') ? settingsRef.current.overtimeMinutes : settingsRef.current.quarterMinutes) * 60000;
             const nextShotClock = settingsRef.current.shotClockSeconds * 1000;
             clockMsRef.current = nextClock;
@@ -1021,7 +1035,15 @@ export default function Scoreboard() {
           </div>
           <div className="space-y-2">
             <div className="text-gray-400 text-xs font-semibold uppercase">Timeouts ({data.timeouts})</div>
-            <ControlButton label="ขอเวลานอก" color="bg-orange-600 hover:bg-orange-500" onClick={() => startTimeout(type)} disabled={activeTimeout !== null || data.timeouts <= 0}/>
+            <ControlButton
+              label={activeTimeout === type ? "จบเวลานอก" : "ขอเวลานอก"}
+              color={activeTimeout === type ? "bg-red-700 hover:bg-red-600" : "bg-orange-600 hover:bg-orange-500"}
+              onClick={() => activeTimeout === type ? stopTimeout() : startTimeout(type)}
+              disabled={(activeTimeout !== null && activeTimeout !== type) || (activeTimeout === null && data.timeouts <= 0)}/>
+            <div className="grid grid-cols-2 gap-2">
+              <ControlButton label="+1" color="bg-green-700 hover:bg-green-600" onClick={() => adjustTimeouts(type, 1)} disabled={data.timeouts >= settings.timeoutsPerTeam}/>
+              <ControlButton label="-1" color="bg-gray-600 hover:bg-gray-500" onClick={() => adjustTimeouts(type, -1)} disabled={data.timeouts <= 0}/>
+            </div>
           </div>
         </div>
       </div>);
