@@ -124,7 +124,7 @@ const DEFAULT_SETTINGS = {
     playerFoulOutLimit: 5,
     timeoutsPerTeam: 3,
     timeoutDuration: 60,
-    quarterBreakDuration: 120,
+    quarterBreakMinutes: 2,
     soundEnabled: true,
     soundVolume: 50,
 };
@@ -159,10 +159,21 @@ const cloneTeam = (team) => ({
     players: team.players.map(player => ({ ...player })),
 });
 const cloneLogs = (logs) => logs.map(log => ({ ...log }));
-const normalizeSettings = (value) => ({
-    ...DEFAULT_SETTINGS,
-    ...(value || {}),
-});
+const normalizeSettings = (value) => {
+    const incoming = value || {};
+    const savedMinutes = Number(incoming.quarterBreakMinutes);
+    const legacySeconds = Number(incoming.quarterBreakDuration);
+    const quarterBreakMinutes = Number.isFinite(savedMinutes) && savedMinutes > 0
+        ? savedMinutes
+        : Number.isFinite(legacySeconds) && legacySeconds > 0
+            ? legacySeconds / 60
+            : DEFAULT_SETTINGS.quarterBreakMinutes;
+    return {
+        ...DEFAULT_SETTINGS,
+        ...incoming,
+        quarterBreakMinutes,
+    };
+};
 const normalizeTeam = (value, fallback) => ({
     ...fallback,
     ...(value || {}),
@@ -235,6 +246,7 @@ export default function Scoreboard() {
     const [timeoutMs, setTimeoutMs] = useState(0);
     const [activeTimeout, setActiveTimeout] = useState(null);
     const [quarterBreakMs, setQuarterBreakMs] = useState(0);
+    const [quarterBreakPresetMs, setQuarterBreakPresetMs] = useState(DEFAULT_SETTINGS.quarterBreakMinutes * 60 * 1000);
     const [isQuarterBreakRunning, setIsQuarterBreakRunning] = useState(false);
     const [logs, setLogs] = useState([]);
     const [history, setHistory] = useState([]);
@@ -259,6 +271,7 @@ export default function Scoreboard() {
     const timeoutMsRef = useRef(timeoutMs);
     const activeTimeoutRef = useRef(activeTimeout);
     const quarterBreakMsRef = useRef(quarterBreakMs);
+    const quarterBreakPresetMsRef = useRef(quarterBreakPresetMs);
     const isQuarterBreakRunningRef = useRef(isQuarterBreakRunning);
     const logsRef = useRef(logs);
     const historyRef = useRef(history);
@@ -283,15 +296,16 @@ export default function Scoreboard() {
         timeoutMsRef.current = timeoutMs;
         activeTimeoutRef.current = activeTimeout;
         quarterBreakMsRef.current = quarterBreakMs;
+        quarterBreakPresetMsRef.current = quarterBreakPresetMs;
         isQuarterBreakRunningRef.current = isQuarterBreakRunning;
         logsRef.current = logs;
         historyRef.current = history;
         redoStackRef.current = redoStack;
         stateRef.current = {
             settings, home, away, quarter, possession, clockMs, isClockRunning,
-            shotClockMs, isShotClockRunning, timeoutMs, activeTimeout, quarterBreakMs, isQuarterBreakRunning, blinkHome, blinkAway, displayView
+            shotClockMs, isShotClockRunning, timeoutMs, activeTimeout, quarterBreakMs, quarterBreakPresetMs, isQuarterBreakRunning, blinkHome, blinkAway, displayView
         };
-    }, [settings, home, away, quarter, possession, clockMs, isClockRunning, shotClockMs, isShotClockRunning, timeoutMs, activeTimeout, quarterBreakMs, isQuarterBreakRunning, blinkHome, blinkAway, displayView, logs, history, redoStack]);
+    }, [settings, home, away, quarter, possession, clockMs, isClockRunning, shotClockMs, isShotClockRunning, timeoutMs, activeTimeout, quarterBreakMs, quarterBreakPresetMs, isQuarterBreakRunning, blinkHome, blinkAway, displayView, logs, history, redoStack]);
     useEffect(() => {
         const applyDisplayState = (state) => {
             const nextSettings = normalizeSettings(state.settings);
@@ -309,6 +323,7 @@ export default function Scoreboard() {
             setTimeoutMs(typeof state.timeoutMs === 'number' ? Math.max(0, state.timeoutMs) : 0);
             setActiveTimeout(state.activeTimeout === 'home' || state.activeTimeout === 'away' ? state.activeTimeout : null);
             setQuarterBreakMs(typeof state.quarterBreakMs === 'number' ? Math.max(0, state.quarterBreakMs) : 0);
+            setQuarterBreakPresetMs(typeof state.quarterBreakPresetMs === 'number' ? Math.max(0, state.quarterBreakPresetMs) : nextSettings.quarterBreakMinutes * 60 * 1000);
             setIsQuarterBreakRunning(Boolean(state.isQuarterBreakRunning));
             setBlinkHome(Boolean(state.blinkHome));
             setBlinkAway(Boolean(state.blinkAway));
@@ -337,6 +352,7 @@ export default function Scoreboard() {
                     const restoredShotClock = typeof parsed.shotClockMs === 'number' ? Math.max(0, parsed.shotClockMs) : nextSettings.shotClockSeconds * 1000;
                     const restoredTimeout = typeof parsed.timeoutMs === 'number' ? Math.max(0, parsed.timeoutMs) : 0;
                     const restoredQuarterBreak = typeof parsed.quarterBreakMs === 'number' ? Math.max(0, parsed.quarterBreakMs) : 0;
+                    const restoredQuarterBreakPreset = typeof parsed.quarterBreakPresetMs === 'number' ? Math.max(0, parsed.quarterBreakPresetMs) : nextSettings.quarterBreakMinutes * 60 * 1000;
                     const restoredLogs = Array.isArray(parsed.logs) ? parsed.logs : [];
                     const restoredDisplayView = parsed.displayView === 'stats' ? 'stats' : 'scoreboard';
                     settingsRef.current = nextSettings;
@@ -348,6 +364,7 @@ export default function Scoreboard() {
                     shotClockMsRef.current = restoredShotClock;
                     timeoutMsRef.current = restoredTimeout;
                     quarterBreakMsRef.current = restoredQuarterBreak;
+                    quarterBreakPresetMsRef.current = restoredQuarterBreakPreset;
                     isQuarterBreakRunningRef.current = false;
                     logsRef.current = restoredLogs;
                     isClockRunningRef.current = false;
@@ -366,6 +383,7 @@ export default function Scoreboard() {
                         timeoutMs: restoredTimeout,
                         activeTimeout: null,
                         quarterBreakMs: restoredQuarterBreak,
+                        quarterBreakPresetMs: restoredQuarterBreakPreset,
                         isQuarterBreakRunning: false,
                         blinkHome: false,
                         blinkAway: false,
@@ -380,6 +398,7 @@ export default function Scoreboard() {
                     setShotClockMs(restoredShotClock);
                     setTimeoutMs(restoredTimeout);
                     setQuarterBreakMs(restoredQuarterBreak);
+                    setQuarterBreakPresetMs(restoredQuarterBreakPreset);
                     setIsQuarterBreakRunning(false);
                     setLogs(restoredLogs);
                     setDisplayView(restoredDisplayView);
@@ -844,14 +863,18 @@ export default function Scoreboard() {
     const startQuarterBreak = () => {
         if (activeTimeoutRef.current)
             stopTimeout();
+        const duration = Math.max(0, quarterBreakPresetMsRef.current);
+        if (duration <= 0) {
+            showAlert('แจ้งเตือน', 'กรุณาเพิ่มเวลาพักควอเตอร์ก่อนเริ่ม');
+            return;
+        }
         stopGameAndShotClocks();
-        const duration = Math.max(1, settingsRef.current.quarterBreakDuration) * 1000;
         quarterBreakMsRef.current = duration;
         isQuarterBreakRunningRef.current = true;
         quarterBreakEndRef.current = performance.now() + duration;
         setQuarterBreakMs(duration);
         setIsQuarterBreakRunning(true);
-        addLog(`เริ่มพักระหว่างควอเตอร์ ${Math.max(1, settingsRef.current.quarterBreakDuration)} วินาที`);
+        addLog(`เริ่มพักระหว่างควอเตอร์ ${formatTime(duration)}`);
     };
     const stopQuarterBreak = () => {
         quarterBreakMsRef.current = 0;
@@ -859,6 +882,22 @@ export default function Scoreboard() {
         quarterBreakEndRef.current = null;
         setQuarterBreakMs(0);
         setIsQuarterBreakRunning(false);
+    };
+    const adjustQuarterBreak = (amount) => {
+        if (isQuarterBreakRunningRef.current) {
+            const next = Math.max(0, quarterBreakMsRef.current + amount);
+            if (next <= 0) {
+                stopQuarterBreak();
+                return;
+            }
+            quarterBreakMsRef.current = next;
+            quarterBreakEndRef.current = performance.now() + next;
+            setQuarterBreakMs(next);
+            return;
+        }
+        const nextPreset = Math.max(0, quarterBreakPresetMsRef.current + amount);
+        quarterBreakPresetMsRef.current = nextPreset;
+        setQuarterBreakPresetMs(nextPreset);
     };
     const adjustTimeouts = (team, amount) => {
         const current = team === 'home' ? homeRef.current : awayRef.current;
@@ -1208,10 +1247,6 @@ export default function Scoreboard() {
               <input type="number" value={settings.shotClockSeconds} onChange={(e) => setSettings({ ...settings, shotClockSeconds: parseInt(e.target.value) || 24 })} className="w-full bg-gray-900 p-2 rounded border border-gray-700"/>
             </div>
             <div>
-              <label className="block text-sm mb-1 text-gray-400">พักระหว่างควอเตอร์ (วินาที)</label>
-              <input type="number" min="1" value={settings.quarterBreakDuration} onChange={(e) => setSettings({ ...settings, quarterBreakDuration: Math.max(1, parseInt(e.target.value) || 120) })} className="w-full bg-gray-900 p-2 rounded border border-gray-700"/>
-            </div>
-            <div>
               <label className="block text-sm mb-1 text-gray-400">จำนวนเวลานอกต่อทีม</label>
               <input type="number" value={settings.timeoutsPerTeam} onChange={(e) => {
             const val = parseInt(e.target.value) || 3;
@@ -1521,8 +1556,13 @@ export default function Scoreboard() {
                       <button onClick={() => setPossession('home')} className={`px-5 py-2 rounded-lg font-black transition-all ${possession === 'home' ? 'bg-yellow-500 text-black shadow-[0_0_10px_rgba(234,179,8,0.5)]' : 'bg-gray-800 text-gray-400'}`}>เหย้า ◀</button>
                       <button onClick={() => setPossession('away')} className={`px-5 py-2 rounded-lg font-black transition-all ${possession === 'away' ? 'bg-yellow-500 text-black shadow-[0_0_10px_rgba(234,179,8,0.5)]' : 'bg-gray-800 text-gray-400'}`}>▶ เยือน</button>
                     </div>
-                    <div className="flex gap-3">
+                    <div className="flex flex-wrap gap-3 items-center">
                        <button onClick={() => settings.soundEnabled && void playHorn('quarter', settings.soundVolume / 100)} className="px-4 py-3 bg-orange-700 hover:bg-orange-600 rounded-xl flex items-center gap-2 text-sm font-bold shadow-lg transition-colors"><Volume2 size={20}/> แตรยาว (H)</button>
+                       <div className="flex items-center gap-2 bg-gray-950 p-2 rounded-xl border border-gray-800 shadow-inner">
+                         <div className="px-2 text-center"><div className="text-[10px] font-black text-gray-500 tracking-widest">พักควอเตอร์</div><div className="font-mono text-lg font-bold text-blue-300">{formatTime(isQuarterBreakRunning ? quarterBreakMs : quarterBreakPresetMs)}</div></div>
+                         <div className="flex flex-col gap-1"><button onClick={() => adjustQuarterBreak(60000)} className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs font-semibold">+1 นาที</button><button onClick={() => adjustQuarterBreak(1000)} className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs font-semibold">+1 วิ</button></div>
+                         <div className="flex flex-col gap-1"><button onClick={() => adjustQuarterBreak(-60000)} className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs font-semibold">-1 นาที</button><button onClick={() => adjustQuarterBreak(-1000)} className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs font-semibold">-1 วิ</button></div>
+                       </div>
                        <button onClick={isQuarterBreakRunning ? stopQuarterBreak : startQuarterBreak} className={`px-4 py-3 rounded-xl text-sm font-bold shadow-lg transition-colors flex items-center gap-2 ${isQuarterBreakRunning ? 'bg-red-700 hover:bg-red-600' : 'bg-blue-700 hover:bg-blue-600'}`}><Clock size={20}/> {isQuarterBreakRunning ? 'จบพักควอเตอร์' : 'พักระหว่างควอเตอร์'}</button>
                        {activeTimeout && <button onClick={stopTimeout} className="px-4 py-3 bg-red-700 hover:bg-red-600 rounded-xl text-sm font-bold shadow-lg transition-colors flex items-center gap-2"><Clock size={20}/> จบเวลานอก</button>}
                     </div>
