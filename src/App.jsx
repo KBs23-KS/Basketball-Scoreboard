@@ -653,7 +653,7 @@ export default function Scoreboard() {
         const next = Math.max(0, seconds * 1000);
         shotClockMsRef.current = next;
         setShotClockMs(next);
-        if (isClockRunningRef.current && clockMsRef.current > 0 && next > 0) {
+        if (next > 0) {
             shotClockEndRef.current = performance.now() + next;
             isShotClockRunningRef.current = true;
             setIsShotClockRunning(true);
