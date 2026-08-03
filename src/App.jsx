@@ -533,24 +533,24 @@ export default function Scoreboard() {
 
             <div className="text-5xl md:text-6xl font-bold text-gray-400 mb-2 uppercase tracking-widest">{quarter}</div>
             
-            {/* GAME CLOCK - ขยายให้ใหญ่สุดและเรืองแสง */}
+            {/* GAME CLOCK - ปรับขนาดให้สมดุลและไม่ล้นหน้าจอ */}
             <div className={`font-mono font-bold leading-none tracking-tighter ${clockColor} ${!isClockRunning && clockMs > 0 ? 'opacity-90' : ''}`}
                  style={{ 
-                   fontSize: 'clamp(8rem, 18vw, 24rem)', 
+                   fontSize: 'clamp(5rem, 11vw, 14rem)', 
                    fontVariantNumeric: 'tabular-nums',
-                   textShadow: '0 10px 30px rgba(0,0,0,0.8), 0 0 60px currentColor'
+                   textShadow: '0 5px 15px rgba(0,0,0,0.5), 0 0 30px currentColor'
                  }}>
               {formatTime(clockMs)}
             </div>
-            {clockMs === 0 && !isClockRunning && <div className="text-red-500 font-bold text-5xl mt-2 mb-4 animate-pulse shadow-black drop-shadow-2xl">END OF {quarter}</div>}
+            {clockMs === 0 && !isClockRunning && <div className="text-red-500 font-bold text-4xl md:text-5xl mt-2 mb-4 animate-pulse shadow-black drop-shadow-2xl">END OF {quarter}</div>}
             
-            {/* SHOT CLOCK - ปรับให้เรืองแสงและใหญ่ขึ้น */}
-            <div className="mt-8 flex flex-col items-center bg-black px-10 py-6 rounded-2xl border-2 border-gray-800 w-full max-w-lg">
-              <span className="text-gray-500 text-2xl font-bold uppercase tracking-widest mb-2">SHOT CLOCK</span>
+            {/* SHOT CLOCK - ปรับขนาดให้พอดี */}
+            <div className="mt-4 md:mt-8 flex flex-col items-center bg-black px-6 py-4 md:px-8 md:py-5 rounded-2xl border-2 border-gray-800 w-full max-w-sm md:max-w-md">
+              <span className="text-gray-500 text-lg md:text-xl font-bold uppercase tracking-widest mb-1 md:mb-2">SHOT CLOCK</span>
               <div className={`font-mono font-bold leading-none ${shotClockColor}`}
                    style={{ 
-                     fontSize: 'clamp(6rem, 12vw, 16rem)',
-                     textShadow: '0 0 40px currentColor'
+                     fontSize: 'clamp(4rem, 8vw, 10rem)',
+                     textShadow: '0 0 20px currentColor'
                    }}>
                 {shotClockMs === 0 ? '00' : formatShotClock(shotClockMs).padStart(2, '0')}
               </div>
